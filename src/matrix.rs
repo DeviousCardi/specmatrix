@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use crate::runner::{Outcome, Verdict};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, serde::Deserialize)]
 pub struct Matrix {
     /// The date this was produced. A matrix without one is a claim about the
     /// past that reads as a claim about the present.
@@ -74,6 +74,110 @@ the backend and is never counted with the others.\n",
         );
         page
     }
+}
+
+impl Matrix {
+    /// A single static page, rendered from the JSON beside it.
+    ///
+    /// `corpus_commit` identifies the corpus the run used, so a reader can
+    /// check out exactly the checks that produced these cells.
+    pub fn to_html(&self, corpus_commit: Option<&str>) -> String {
+        let mut out = String::new();
+        out.push_str(&format!(
+            "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>{} — SpecMatrix</title>\n<style>{}</style>\n</head><body>\n",
+            escape_html(&self.suite),
+            STYLE
+        ));
+        out.push_str(&format!("<h1>{}</h1>\n", escape_html(&self.suite)));
+        out.push_str(&format!(
+            "<p class=\"meta\">Generated {}. Rendered from <code>matrix.json</code> beside this page; every cell in it was produced by a run recorded there.</p>\n",
+            escape_html(&self.generated[..10])
+        ));
+        if let Some(commit) = corpus_commit {
+            out.push_str(&format!(
+                "<p class=\"meta\">Corpus at commit <code>{}</code>.</p>\n",
+                escape_html(commit)
+            ));
+        }
+
+        out.push_str("<table>\n<thead><tr><th>Check</th>");
+        for outcome in &self.outcomes {
+            out.push_str(&format!(
+                "<th>{}<span class=\"ver\">{}</span></th>",
+                escape_html(&outcome.backend),
+                escape_html(&version_line(outcome))
+            ));
+        }
+        out.push_str("</tr></thead>\n<tbody>\n");
+
+        for id in self.check_ids() {
+            let file = id.replace('/', "/");
+            out.push_str(&format!(
+                "<tr><th class=\"check\"><a href=\"../../../cases/{}.yaml\"><code>{}</code></a></th>",
+                escape_html(&file),
+                escape_html(id)
+            ));
+            for outcome in &self.outcomes {
+                match outcome.results.iter().find(|r| r.id == id) {
+                    Some(result) => {
+                        let class = match result.verdict {
+                            Verdict::Pass => "pass",
+                            Verdict::Reject => "reject",
+                            Verdict::Alter => "alter",
+                            Verdict::NotApplicable => "na",
+                        };
+                        out.push_str(&format!(
+                            "<td class=\"{class}\"><span class=\"v\">{}</span><span class=\"d\">{}</span></td>",
+                            label(result.verdict),
+                            escape_html(&result.detail)
+                        ));
+                    }
+                    None => out.push_str("<td class=\"notrun\"><span class=\"v\">not run</span></td>"),
+                }
+            }
+            out.push_str("</tr>\n");
+        }
+        out.push_str("</tbody></table>\n");
+        out.push_str(
+            "<p class=\"meta\"><strong>N/A</strong> means the backend could not be asked — an encoding it does not accept, a query endpoint it does not implement, or a control that did not pass. It is not a verdict about the backend and is never counted with the others.</p>\n<p class=\"meta\"><strong>ALTER</strong> means the write was accepted and what came back was different, or never came back at all. Nothing errored at the time.</p>\n",
+        );
+        out.push_str("</body></html>\n");
+        out
+    }
+}
+
+/// N/A is given a colour that resembles neither a pass nor a failure, because
+/// it is not a verdict about the backend.
+const STYLE: &str = "\
+body{font:15px/1.5 system-ui,sans-serif;margin:2rem auto;max-width:none;padding:0 1.5rem;color:#111}\
+h1{font-size:1.4rem;margin:0 0 .5rem}\
+.meta{color:#555;max-width:60rem}\
+table{border-collapse:collapse;margin:1.5rem 0;font-size:13px}\
+th,td{border:1px solid #ddd;padding:.4rem .6rem;text-align:left;vertical-align:top}\
+thead th{background:#f6f6f6;white-space:nowrap}\
+.ver{display:block;font-weight:400;color:#666;font-size:11px}\
+th.check{font-weight:400;white-space:nowrap}\
+td{max-width:22rem}\
+.v{display:block;font-weight:600;font-size:11px;letter-spacing:.04em}\
+.d{display:block;color:#444;font-size:11px;word-break:break-word}\
+.pass{background:#f3faf3}.pass .v{color:#216c2a}\
+.reject{background:#fdf6ee}.reject .v{color:#8a5a12}\
+.alter{background:#fdf0f0}.alter .v{color:#a01b1b}\
+.na{background:#f4f4f7}.na .v{color:#5a5a70}\
+.notrun{background:#fff}.notrun .v{color:#999}\
+";
+
+fn version_line(outcome: &Outcome) -> String {
+    match (&outcome.backend_version, &outcome.backend_image) {
+        (Some(v), Some(i)) if !i.contains(v.trim_start_matches('v')) => format!("{v} · {i}"),
+        (Some(v), _) => v.clone(),
+        (None, Some(i)) => format!("image {i}"),
+        (None, None) => "version unknown".to_string(),
+    }
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 fn column_heading(outcome: &Outcome) -> String {
@@ -223,6 +327,57 @@ mod tests {
         let page = matrix.to_markdown();
         let row = page.lines().find(|l| l.contains("es-bulk/x")).unwrap();
         assert_eq!(row.matches('|').count() - row.matches("\\|").count(), 3, "{row}");
+    }
+
+    /// The page must never carry a score, a percentage or an ordering.
+    #[test]
+    fn the_html_page_carries_no_score_or_ranking() {
+        let page = two().to_html(None).to_lowercase();
+        for banned in ["score", "rank", "%", " out of ", "best", "worst", "winner"] {
+            assert!(!page.contains(banned), "page must not contain {banned:?}");
+        }
+    }
+
+    #[test]
+    fn the_html_page_is_dated_and_versioned() {
+        let page = two().to_html(Some("abc1234"));
+        assert!(page.contains("2026-09-08"), "{page}");
+        assert!(page.contains("2.9.4"), "{page}");
+        assert!(page.contains("abc1234"), "{page}");
+    }
+
+    /// N/A must be visually distinct from a pass and from a failure, because
+    /// it is not a verdict about the backend.
+    #[test]
+    fn each_verdict_gets_its_own_class() {
+        let page = two().to_html(None);
+        for class in ["class=\"pass\"", "class=\"reject\"", "class=\"alter\""] {
+            assert!(page.contains(class), "missing {class}");
+        }
+        assert!(page.contains(".na{background"), "N/A needs a colour of its own");
+        assert!(page.contains("never counted with the others"), "{page}");
+    }
+
+    /// A detail carrying markup must not be able to close a tag.
+    #[test]
+    fn a_detail_containing_markup_is_escaped() {
+        let when = chrono::Utc::now();
+        let matrix = Matrix::new("es-bulk", vec![outcome(
+            "stub", Some("1"), Some("stub:1"),
+            vec![("es-bulk/x", Verdict::Alter, r#"<script>alert("x")</script> & "quoted""#)],
+        )], when);
+        let page = matrix.to_html(None);
+        assert!(!page.contains("<script>"), "markup must be escaped");
+        assert!(page.contains("&lt;script&gt;"), "{page}");
+        assert!(page.contains("&amp;"), "{page}");
+    }
+
+    /// Each row links to the check that produced it, so a reader can see the
+    /// rule the verdict rests on.
+    #[test]
+    fn each_row_links_to_its_case_file() {
+        let page = two().to_html(None);
+        assert!(page.contains("cases/otlp-logs/minimal-record.yaml"), "{page}");
     }
 
     /// The JSON is the artefact the page is rendered from, so it has to carry
