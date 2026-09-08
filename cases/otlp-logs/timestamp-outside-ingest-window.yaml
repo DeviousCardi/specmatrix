@@ -87,3 +87,25 @@ notes: >
 
   Quickwit 0.8.2: PASS, round trip intact. It keeps a record dated thirty days
   ago, so of the three stores only OpenObserve discards out-of-window data.
+
+  VictoriaLogs v1.52.0: ALTER, and the cleanest instance of exactly the
+  behaviour this case was written for. Confirmed by hand on 2026-09-08:
+
+    HTTP/1.1 200 OK
+    Content-Length: 0
+
+  A zero-length body is a valid but empty ExportLogsServiceResponse: it carries
+  no partial_success, so it asserts that the whole batch was accepted. The
+  record never becomes queryable.
+
+  The cause is retention, not an ingest window: -retentionPeriod defaults to 7d
+  and VictoriaLogs' own documentation says entries with timestamps outside it
+  "are also rejected during data ingestion". A controlled comparison confirms
+  it and rules out other causes — a 3-day-old record answers 200 and is found;
+  the 30-day-old one answers 200 and is not.
+
+  So the store considers the record rejected and the caller is told it
+  succeeded. Where OpenObserve reports its discard through partial_success and
+  merely encodes the report unreadably, VictoriaLogs sends nothing at all: no
+  count, no message, no error. Of the two, this is the one a caller has no way
+  to detect.

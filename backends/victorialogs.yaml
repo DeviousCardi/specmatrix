@@ -1,0 +1,72 @@
+# Adapter for VictoriaLogs.
+#
+# Confirmed by hand against v1.52.0 on 2026-09-08; `latest` resolved to that
+# version on that date and the tag below is pinned to what was tested.
+#
+# Like Quickwit, it refuses OTLP JSON, and says so plainly:
+#
+#   $ curl -X POST localhost:9428/insert/opentelemetry/v1/logs \
+#       -H 'Content-Type: application/json' --data-binary @minimal-record.json
+#   json encoding isn't supported for opentelemetry format. Use protobuf encoding
+#   HTTP 400
+#
+# The OTLP specification makes JSON a SHOULD rather than a MUST, so this is a
+# deviation from a recommendation and not a conformance failure. The runner
+# encodes the corpus's OTLP JSON as protobuf, so the cases that can cross that
+# wire get real verdicts.
+#
+# Read-back, from a stored record rather than from documentation:
+#
+#   - the body is the message field `_msg`
+#   - the timestamp is `_time`, an RFC 3339 string carrying full nanoseconds
+#   - severity keeps its OTLP names, `severity_text` and `severity_number`
+#   - attribute keys keep their dots, so the run key is stored as
+#     `specmatrix.run` and selected with `specmatrix.run:=<key>`, which needs no
+#     quoting and so survives being placed in a URL
+#
+# One response shape to know: /select/logsql/query answers with newline-
+# delimited JSON, one object per line, and an empty body when nothing matches.
+# Filtering by run key returns exactly one line, which parses as a single JSON
+# object, and an empty body simply fails to parse and the runner keeps polling
+# until its timeout. That is the behaviour we want and it is why the query
+# filters rather than listing.
+
+name: victorialogs
+version_from:
+  # VictoriaLogs reports its version only on the Prometheus metrics endpoint,
+  # in text rather than JSON. A matrix without versions is a claim about the
+  # past that reads as a claim about the present, so it is read with a pattern.
+  request: GET /metrics
+  pattern: 'vm_app_version\{.*short_version="([^"]+)"'
+
+container:
+  image: victoriametrics/victoria-logs:v1.52.0
+  port: 9428
+  ready:
+    request: GET /health
+    expect_status: 200
+
+auth:
+  kind: none
+
+protocols:
+  otlp-logs:
+    formats: [otlp-protobuf]
+    ingest:
+      request: POST /insert/opentelemetry/v1/logs
+      headers:
+        Content-Type: application/x-protobuf
+    readback:
+      request: GET /select/logsql/query?query=specmatrix.run:={{ run_key }}&limit=10
+      # The response is one JSON object per line; filtered by run key it is one
+      # line, which the runner reads as a single record.
+      records: ""
+      # Renames only. Each field holds the value that was sent.
+      fields:
+        body: /_msg
+        severityText: /severity_text
+        severityNumber: /severity_number
+        timeUnixNano: /_time
+      poll:
+        interval_ms: 500
+        timeout_ms: 30000

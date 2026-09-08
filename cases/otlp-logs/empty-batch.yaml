@@ -40,3 +40,7 @@ notes: >
   with nothing to send will retry an empty export indefinitely. The inner
   message is empty, so there is nothing for an operator to act on either.
   Report upstream.
+
+  VictoriaLogs v1.52.0: PASS, 200. Three of the four stores accept an empty
+  export; only Quickwit 0.8.2 answers 500, which is what makes that a finding
+  about Quickwit rather than an unsettled question about the protocol.

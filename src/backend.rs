@@ -35,8 +35,13 @@ pub struct Backend {
 #[derive(Debug, Deserialize)]
 pub struct VersionFrom {
     pub request: String,
-    /// JSON pointer or bare field name in the response
-    pub field: String,
+    /// JSON pointer or bare field name in the response.
+    pub field: Option<String>,
+    /// A regular expression with one capture group, for a store that reports
+    /// its version as text rather than JSON. Several expose it only on a
+    /// Prometheus metrics endpoint, and a matrix without versions is a claim
+    /// about the past that reads as a claim about the present.
+    pub pattern: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
