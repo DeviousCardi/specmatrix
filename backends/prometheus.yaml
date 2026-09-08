@@ -6,7 +6,7 @@
 # statement about precedence, not about quality — a divergence found in
 # Prometheus itself is still a divergence, and is filed like any other.
 #
-# Confirmed by hand against prom/prometheus:v3.6.0 on 2026-09-09:
+# Confirmed by hand against prom/prometheus:v3.14.0 on 2026-09-09:
 #
 #   $ curl -s localhost:9090/api/v1/status/buildinfo
 #   {"status":"success","data":{"version":"3.6.0",...}}
@@ -26,7 +26,7 @@ version_from:
   field: /data/version
 
 container:
-  image: prom/prometheus:v3.6.0
+  image: prom/prometheus:v3.14.0
   # The receiver is off by default. Without this flag /api/v1/write answers 404
   # and every row reads as a rejection, which would be a finding about a
   # configuration rather than about Prometheus.
@@ -65,6 +65,10 @@ protocols:
       # template cannot choose between the two.
       params:
         query: '{{ series_selector }}'
+        # The instant to ask about, which a check may set. Defaults to now.
+        # Without it, the one case that timestamps a sample in the future is
+        # asked about the present and reads as data the store lost.
+        time: '{{ query_time_s }}'
       records: /data/result
       fields:
         value: /value/1

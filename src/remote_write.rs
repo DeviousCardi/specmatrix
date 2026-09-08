@@ -304,6 +304,44 @@ mod tests {
         WriteRequest::decode(&raw[..]).expect("valid protobuf")
     }
 
+    /// Prints the exact bytes of the duplicate-label payload, base64-encoded,
+    /// so an upstream report can be reproduced with curl and nothing else.
+    /// Ignored by default; run with `cargo test emit_duplicate_label_body --
+    /// --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn emit_duplicate_label_body() {
+        let payload = br#"{"timeseries":[{"labels":[
+            {"name":"__name__","value":"dup_demo"},
+            {"name":"zone","value":"a"},
+            {"name":"zone","value":"b"}],
+            "samples":[{"value":1,"timestamp":TS}]}]}"#;
+        let now =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+        let text = String::from_utf8_lossy(payload).replace("TS", &now.to_string());
+        let wire = to_wire(text.as_bytes()).unwrap();
+        eprintln!("{}", base64(&wire));
+    }
+
+    /// Local base64, so the repro helper adds no dependency to the crate.
+    #[cfg(test)]
+    fn base64(bytes: &[u8]) -> String {
+        const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+            let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+            for i in 0..4 {
+                if i <= chunk.len() {
+                    out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
+    }
+
     #[test]
     fn a_gauge_survives_the_json_to_protobuf_step() {
         let request = round_trip(GAUGE);

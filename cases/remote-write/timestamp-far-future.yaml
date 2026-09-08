@@ -23,6 +23,12 @@ expect:
   readback:
     match: present
     series: specmatrix_future_gauge
+    # Asked at a time after the sample, not at the present. An instant query
+    # answers with the latest sample at or before the time asked for, so a
+    # query at now can never see a sample an hour ahead of it — on any store.
+    # Asking anyway reported GreptimeDB as having accepted and dropped the
+    # sample, which was the harness, not the store.
+    at: '{{ far_future_query_s }}'
     on:
       - field: value
         as: float

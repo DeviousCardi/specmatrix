@@ -2,12 +2,47 @@
   "timeseries": [
     {
       "labels": [
-        {"name": "__name__", "value": "specmatrix_dup_gauge"},
-        {"name": "specmatrix_run", "value": "{{ run_key }}"},
-        {"name": "zone", "value": "a"},
-        {"name": "zone", "value": "b"}
+        {
+          "name": "__name__",
+          "value": "specmatrix_dup_gauge"
+        },
+        {
+          "name": "specmatrix_run",
+          "value": "{{ run_key }}"
+        },
+        {
+          "name": "zone",
+          "value": "a"
+        },
+        {
+          "name": "zone",
+          "value": "b"
+        }
       ],
-      "samples": [{"value": 1, "timestamp": "{{ now_ms }}"}]
+      "samples": [
+        {
+          "value": 1,
+          "timestamp": "{{ now_ms }}"
+        }
+      ]
+    },
+    {
+      "labels": [
+        {
+          "name": "__name__",
+          "value": "specmatrix_dup_witness"
+        },
+        {
+          "name": "specmatrix_run",
+          "value": "{{ run_key }}"
+        }
+      ],
+      "samples": [
+        {
+          "value": 1,
+          "timestamp": "{{ now_ms }}"
+        }
+      ]
     }
   ]
 }

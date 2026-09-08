@@ -22,8 +22,24 @@ send:
 expect:
   ingest: accepted
   readback:
-    match: absent
-    series: specmatrix_stale_gauge
+    # The witness first, and the order is load-bearing. A store that has not
+    # caught up yet answers "nothing here" to every query, so an absence check
+    # run on its own passes for the wrong reason. The witness is an ordinary
+    # series in the same request at the same timestamp: once it is queryable,
+    # the store has demonstrably seen this write, and only then does the
+    # absence of the stale series mean anything.
+    #
+    # This is not hypothetical. VictoriaMetrics defaults to a 30s
+    # search.latencyOffset, so an instant query cannot see the last half minute
+    # of data at all, and without the witness this case would have reported it
+    # as honouring a stale marker it had not yet read.
+    - match: present
+      series: specmatrix_stale_witness
+      on:
+        - field: value
+          as: float
+    - match: absent
+      series: specmatrix_stale_gauge
 
 notes: >
   The marker is the specific payload, not any NaN. Confirmed against

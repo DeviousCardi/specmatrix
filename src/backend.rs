@@ -118,6 +118,19 @@ pub struct Protocol {
     pub setup: Option<Request>,
     pub setup_verify: Option<Verify>,
     pub teardown: Option<Request>,
+    /// Cases this adapter cannot put to this backend, each with the reason.
+    ///
+    /// Only ever an inability of the query language or of this adapter, never
+    /// a behaviour of the store. GreptimeDB's PromQL has no quoted-name form,
+    /// so there is no way to write a selector for a metric whose name is not a
+    /// legacy identifier — the data is there, and the question cannot be
+    /// asked. Recording that as a divergence would blame the store for a limit
+    /// of the harness.
+    ///
+    /// The reason is required and is printed in the cell, because an
+    /// unexplained exclusion is indistinguishable from a hidden failure.
+    #[serde(default)]
+    pub unsupported: HashMap<String, String>,
     /// Where a query-semantics check sends its query and where the rows come
     /// back. Separate from `readback` because it asks a different question and
     /// a backend may answer it at a different endpoint.

@@ -139,6 +139,11 @@ pub struct ReadbackExpect {
     /// Rendered into the adapter's read-back as `{{ series }}`, so which query
     /// finds a named series stays the adapter's business.
     pub series: Option<String>,
+    /// The instant to ask about, rendered as `{{ query_time_s }}`. Defaults to
+    /// now, which is what every check wants except one: a sample deliberately
+    /// timestamped in the future cannot be found by a query at the present,
+    /// and asking anyway reports the store as having dropped it.
+    pub at: Option<String>,
 }
 
 /// A field a check asserts on, optionally with how to read it.

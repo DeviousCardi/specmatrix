@@ -1,0 +1,72 @@
+# Adapter for GreptimeDB, standalone.
+#
+# Confirmed by hand against greptime/greptimedb:v1.2.0 on 2026-09-09:
+#
+#   $ curl -s localhost:4000/status
+#   {"source_time":"2025-09-28T08:21:06Z","commit":"4bb9ceb...","version":"0.17.2",...}
+#
+# GreptimeDB claims the Prometheus remote-write and query APIs under a
+# /v1/prometheus prefix. It stores metrics in its own table model rather than a
+# TSDB, so what it does with an unusual label set is a genuinely different
+# implementation and not another build of the same one.
+
+name: greptimedb
+version_from:
+  request: GET /status
+  field: version
+
+container:
+  image: greptime/greptimedb:v1.2.0
+  command:
+    - standalone
+    - start
+    - --http-addr
+    - 0.0.0.0:4000
+    - --rpc-bind-addr
+    - 0.0.0.0:4001
+  port: 4000
+  ready:
+    request: GET /health
+    expect_status: 200
+
+auth:
+  kind: none
+
+run_key_field: specmatrix_run
+
+protocols:
+  remote-write:
+    formats: [remote-write-protobuf]
+    # Confirmed by hand on 2026-09-09, and an inability of the query language
+    # rather than a behaviour of the store:
+    #
+    #   $ curl -sG localhost:4000/v1/prometheus/api/v1/query \
+    #       --data-urlencode 'query={"specmatrix_gauge"}'
+    #   {"status":"error","error":"invalid promql query",...}
+    #
+    # GreptimeDB's PromQL does not accept the quoted-name form, even for a
+    # legacy name, so there is no selector that can name a metric called
+    # `specmatrix.utf8.gauge`. The data is there — `show tables` lists the
+    # table under that exact name — and the question simply cannot be asked.
+    unsupported:
+      remote-write/metric-name-utf8: >-
+        GreptimeDB's PromQL has no quoted-name selector, so a metric whose name
+        is not a legacy identifier cannot be named in a query. The table exists
+        under the name sent.
+    ingest:
+      request: POST /v1/prometheus/write
+    readback:
+      request: GET /v1/prometheus/api/v1/query
+      params:
+        query: '{{ series_selector }}'
+        # The instant to ask about, which a check may set. Defaults to now.
+        # Without it, the one case that timestamps a sample in the future is
+        # asked about the present and reads as data the store lost.
+        time: '{{ query_time_s }}'
+      records: /data/result
+      fields:
+        value: /value/1
+        labels: /metric
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000

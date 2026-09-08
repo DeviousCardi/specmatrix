@@ -5,7 +5,7 @@
         {"name": "__name__", "value": "specmatrix_future_gauge"},
         {"name": "specmatrix_run", "value": "{{ run_key }}"}
       ],
-      "samples": [{"value": 1, "timestamp": "{{ now_plus_1h_ms }}"}]
+      "samples": [{"value": 1, "timestamp": "{{ far_future_ms }}"}]
     }
   ]
 }

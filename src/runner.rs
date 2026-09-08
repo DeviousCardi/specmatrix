@@ -160,6 +160,13 @@ impl Runner {
                 format!("adapter {} has no protocol {suite}", self.backend.name)
             })?;
 
+        // A case this adapter has no way to put to this backend. Not a verdict:
+        // the store was never asked, and reporting an inability of ours as a
+        // failure of theirs is the mistake `N/A` exists to prevent.
+        if let Some(reason) = protocol.unsupported.get(&case.id) {
+            return Ok(self.result(case, Verdict::NotApplicable, format!("not asked: {reason}")));
+        }
+
         // A backend that speaks no encoding this case can be sent in is not
         // failing the check, it is ineligible for it. Sending anyway would
         // manufacture one rejection per case out of a single fact, which is
@@ -319,6 +326,21 @@ impl Runner {
         let mut details = Vec::new();
         for expect in expects.all() {
             let mut vars = vars.clone();
+            // When a check asks at a time of its own, honour it; otherwise
+            // now. An adapter writes `time: {{ query_time_s }}` once and does
+            // not need to know which cases care.
+            // Empty unless the check asks, and an empty parameter is not sent
+            // at all — so the query means "now" exactly as it did before this
+            // existed. Defaulting it to `now_s` looked equivalent and was not:
+            // the corpus writes samples at `now_ms`, and truncating the same
+            // instant to a whole second puts the query up to 999ms *before*
+            // the sample it is looking for. An instant query answers with the
+            // latest sample at or before the time asked for, so the answer was
+            // empty, and every backend read as having dropped the control.
+            vars.insert(
+                "query_time_s",
+                expect.at.as_deref().map(|at| template::render(at, &vars)).unwrap_or_default(),
+            );
             if let Some(series) = expect.series.as_deref() {
                 vars.insert("series", series.to_string());
                 // Built here rather than in the adapter because only the
@@ -505,8 +527,16 @@ impl Runner {
         // and pipes, and pasting one into the path produces a 400 before the
         // store ever sees it.
         if !req.params.is_empty() {
-            let mut params: Vec<(String, String)> =
-                req.params.iter().map(|(k, v)| (k.clone(), template::render(v, vars))).collect();
+            // A parameter that renders empty is one the adapter left for a
+            // check to fill in and no check did, so it is not sent. Sending it
+            // empty is not the same as omitting it: `time=` is not `time`
+            // absent, and the difference decides which samples a query sees.
+            let mut params: Vec<(String, String)> = req
+                .params
+                .iter()
+                .map(|(k, v)| (k.clone(), template::render(v, vars)))
+                .filter(|(_, v)| !v.is_empty())
+                .collect();
             params.sort();
             builder = builder.query(&params);
         }
@@ -838,6 +868,23 @@ fn time_vars(
         ("now_minus_10s_ms", (now - chrono::Duration::seconds(10)).timestamp_millis().to_string()),
         ("now_minus_1h_ms", (now - chrono::Duration::hours(1)).timestamp_millis().to_string()),
         ("now_plus_1h_ms", (now + chrono::Duration::hours(1)).timestamp_millis().to_string()),
+        // A pair, and they must be read together. A sample an hour ahead of the
+        // clock cannot be found by an instant query at `now`, because an
+        // instant query answers with the latest sample at or *before* the time
+        // asked for — so the check that sends one has to ask at a time after
+        // it. The query time is a minute later than the sample rather than
+        // exactly equal, because equal leaves the sample up to 999ms in the
+        // future of the query once the millisecond is truncated to a second,
+        // and the answer would be empty for a reason that has nothing to do
+        // with the store. A minute is well inside PromQL's five-minute
+        // lookback, so the sample is still the latest one.
+        ("far_future_ms", (now + chrono::Duration::hours(1)).timestamp_millis().to_string()),
+        (
+            "far_future_query_s",
+            (now + chrono::Duration::hours(1) + chrono::Duration::minutes(1))
+                .timestamp()
+                .to_string(),
+        ),
         ("now_minus_1d_ns", (nanos - day).to_string()),
         ("now_minus_30d_ns", (nanos - 30 * day).to_string()),
     ]

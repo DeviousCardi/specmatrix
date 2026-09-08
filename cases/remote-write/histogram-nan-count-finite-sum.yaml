@@ -14,6 +14,8 @@ rule:
     the de-facto rule: each series is stored as sent.
   observed:
     - https://github.com/vectordotdev/vector/issues/26228
+    - https://github.com/VictoriaMetrics/VictoriaMetrics/issues/7241
+    - https://github.com/GreptimeTeam/greptimedb/pull/8494
 
 send:
   format: remote-write-json
@@ -39,3 +41,36 @@ notes: >
   fabricates a value for the one it finds inconsistent. Vector emits count 0
   here, which is worse than dropping the sample: nothing errors, and a
   dashboard renders the fabricated zero as a measurement.
+
+  Measured 2026-09-09 against the then-current release of each store:
+
+    prometheus 3.14.0        PASS   /api/v1/query returns "NaN"
+    mimir 3.2.0              PASS   returns "NaN"
+    greptimedb 1.2.0         PASS   returns "NaN"
+    victoriametrics 1.151.0  ALTER  discarded at ingest; the series never exists
+
+  VictoriaMetrics drops NaN samples on the way in. /api/v1/export returns
+  nothing for the series and /api/v1/series does not list it, while the finite
+  series sent in the same request export and list normally; no
+  vm_rows_ignored_total counter moves. The write answers 204.
+
+  This is intended and already tracked, which is why it is recorded here and not
+  filed again. NaNs are dropped deliberately (PR VictoriaMetrics#6663); the
+  counter that reported them was disabled in #7166 because NaN samples turn out
+  to be ordinary traffic — node_exporter emits them — and every increment was
+  raising an alert; and #7241 is the open request to count them again without
+  alerting. The verdict stays ALTER because the verdict is about what a caller
+  can observe, and a caller sees 204 and no data.
+
+  GreptimeDB was the instructive one. Version 0.17.2, which was pinned first,
+  stored the sample and returned nothing for it through the Prometheus API —
+  `select isnan(greptime_value)` answered true while /v1/prometheus/api/v1/query
+  returned an empty vector. That was fixed upstream in GreptimeTeam/greptimedb
+  #8494, merged 2026-07-15, which made PromQL treat only the reserved
+  0x7ff0000000000002 payload as a stale marker and preserve ordinary NaNs.
+  v0.17.2 predates it by ten months. Pinning a current release turned a finding
+  into a fix already shipped, which is the reason the roster rule exists.
+
+  One near miss worth keeping. GreptimeDB's SQL HTTP API renders a stored NaN as
+  JSON `null`, because JSON has no NaN literal. Reading only that output says
+  the value was lost. `count(col)` and `IS NULL` say it was not.
