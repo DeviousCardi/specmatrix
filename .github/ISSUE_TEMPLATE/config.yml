@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: A divergence in a backend
+    url: https://github.com/DeviousCardi/specmatrix/blob/main/CONTRIBUTING.md#reporting-a-divergence-upstream
+    about: File it in the backend's own tracker first, then link it from the check.

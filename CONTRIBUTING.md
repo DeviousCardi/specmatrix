@@ -28,8 +28,8 @@ confidently wrong.
 
 ## Adding a backend
 
-Work through the checklist in [`docs/BACKENDS.md`](docs/BACKENDS.md). The parts
-that get skipped, in order of how often:
+Work through the procedure in [`AGENTS.md`](AGENTS.md#adding-a-backend). The
+parts that get skipped, in order of how often:
 
 - **Unattended startup.** If it needs manual setup it will not run in CI, and a
   column that stops running becomes a stale claim.

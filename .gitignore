@@ -2,3 +2,4 @@ target/
 .venv/
 *.log
 results/
+docs/
