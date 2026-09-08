@@ -9,6 +9,7 @@ mod case;
 mod otlp;
 mod query;
 mod report;
+mod stub;
 mod runner;
 mod template;
 
