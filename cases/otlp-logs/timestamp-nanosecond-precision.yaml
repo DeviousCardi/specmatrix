@@ -1,0 +1,29 @@
+id: otlp-logs/timestamp-nanosecond-precision
+protocol: otlp-logs
+title: A nanosecond timestamp is stored at full precision
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/logs/v1
+  section: LogRecord.time_unix_nano
+  text: >
+    time_unix_nano is the time the event occurred, in nanoseconds since the
+    Unix epoch. The specification defines the field's precision but does not
+    say what a store must preserve, so this check records the stored value
+    rather than asserting it. It becomes an exact check once two
+    implementations disagree or the specification is clarified.
+
+send:
+  format: otlp-json
+  body: cases/otlp-logs/timestamp-nanosecond-precision.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [timeUnixNano]
+
+notes: >
+  Observed on Parseable v2.9.4: sent "1755000000123456789", read back
+  "2025-08-12T12:00:00.123". Stored as a millisecond-precision string, so the
+  final six digits are dropped. Adjudication open.
