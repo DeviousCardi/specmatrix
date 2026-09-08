@@ -31,3 +31,6 @@ notes: >
 
   VictoriaLogs v1.52.0: PASS, round trip intact, sent as OTLP protobuf. Four
   stores now pass the control.
+
+  Loki 3.1.1: PASS, round trip intact, 204. Five stores now pass the control.
+  It accepts OTLP in both encodings, unlike Quickwit and VictoriaLogs.

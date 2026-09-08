@@ -95,3 +95,18 @@ notes: >
   preserve. A rule is still missing, and one implementation proving the
   precision is keepable is not that rule. It does strengthen the case for
   asking the specification's owners the question.
+
+  Loki 3.1.1: keeps every digit, read back "1788878689123456789" as a string of
+  nanoseconds. Five stores, three answers:
+
+    Parseable v2.9.4     "2026-09-08T09:31:55.123"         milliseconds
+    OpenObserve v0.92.2  1788859915123456                  microseconds
+    Quickwit 0.8.2       1788859957123456000               nanoseconds holding
+                                                           whole microseconds
+    VictoriaLogs v1.52.0 "2026-09-08T14:36:09.123456789Z"  nanoseconds
+    Loki 3.1.1           "1788878689123456789"             nanoseconds
+
+  Two of five keep the value intact, so the precision is plainly keepable. That
+  is not the same as a rule saying it must be kept, and the specification still
+  does not give one. Recorded, not adjudicated — but this is now a strong
+  question to put to the specification's owners rather than a curiosity.

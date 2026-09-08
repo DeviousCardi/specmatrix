@@ -386,7 +386,9 @@ impl Runner {
         if let Some(field) = self.backend.run_key_field.clone() {
             vars.insert("run_key_field", field);
         }
-        for (key, value) in time_vars(chrono::Utc::now()) {
+        for (key, value) in
+            time_vars(chrono::Utc::now(), self.backend.lookback_days.unwrap_or(730))
+        {
             vars.insert(key, value);
         }
         vars
@@ -404,6 +406,18 @@ impl Runner {
         };
         for (k, v) in &req.headers {
             builder = builder.header(k.as_str(), template::render(v, vars));
+        }
+        // Percent-encoded by reqwest. A LogQL selector carries braces, quotes
+        // and pipes, and pasting one into the path produces a 400 before the
+        // store ever sees it.
+        if !req.params.is_empty() {
+            let mut params: Vec<(String, String)> = req
+                .params
+                .iter()
+                .map(|(k, v)| (k.clone(), template::render(v, vars)))
+                .collect();
+            params.sort();
+            builder = builder.query(&params);
         }
         builder = self.authenticate(builder);
         if self.verbose {
@@ -512,25 +526,12 @@ impl Runner {
         let run_key = vars.get("run_key").cloned().unwrap_or_default();
         let deadline = Instant::now() + Duration::from_millis(readback.poll.timeout_ms);
         loop {
-            let (method, path) = readback.request.parts()?;
-            let url = format!("{}{}", self.base_url, template::render(&path, vars));
-            let mut builder = match method.as_str() {
-                "POST" => self.client.post(&url),
-                _ => self.client.get(&url),
-            };
-            for (k, v) in &readback.request.headers {
-                builder = builder.header(k.as_str(), template::render(v, vars));
-            }
-            builder = self.authenticate(builder);
-            if let Some(body) = &readback.request.body {
-                let rendered = template::render_json(body, vars);
-                builder = builder
-                    .header("Content-Type", "application/json")
-                    .body(rendered.to_string());
-            }
-            if let Ok(response) = builder.send() {
-                let text = response.text().unwrap_or_default();
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+            // Built by `send_declared`, not by hand. This loop used to
+            // reassemble the request itself and so quietly ignored anything
+            // `send` learned to do — query parameters among them, which made a
+            // correct Loki adapter read as a store that had lost the record.
+            if let Ok(response) = self.send_declared(&readback.request, vars) {
+                if let Ok(value) = serde_json::from_slice::<Value>(&response.body) {
                     if let Some(record) = first_record(&value, &readback.records, &run_key) {
                         return Ok(Some(record));
                     }
@@ -577,7 +578,12 @@ impl Runner {
         let Some(vf) = self.backend.version_from.as_ref() else {
             return Ok(None);
         };
-        let req = Request { request: vf.request.clone(), headers: Default::default(), body: None };
+        let req = Request {
+            request: vf.request.clone(),
+            headers: Default::default(),
+            params: Default::default(),
+            body: None,
+        };
         let response = self.send(&req, &Vars::new(), Vec::new())?;
         if !(200..300).contains(&response.status) {
             return Ok(None);
@@ -678,7 +684,7 @@ fn ingest_verdict(expected: &str, accepted: bool) -> Result<Option<Verdict>> {
 /// fixed instant ages out of a store's ingest window, and then a check measures
 /// the fixture rather than the backend — which is what the 0.1 OpenObserve
 /// adapter had to widen `ZO_INGEST_ALLOWED_UPTO` to work around.
-fn time_vars(now: chrono::DateTime<chrono::Utc>) -> Vec<(&'static str, String)> {
+fn time_vars(now: chrono::DateTime<chrono::Utc>, lookback_days: i64) -> Vec<(&'static str, String)> {
     let nanos = now.timestamp_nanos_opt().unwrap_or_default() as i128;
     let day: i128 = 86_400_000_000_000;
     // Truncated to the second, then a fixed sub-second remainder. A live
@@ -690,7 +696,8 @@ fn time_vars(now: chrono::DateTime<chrono::Utc>) -> Vec<(&'static str, String)> 
     // The search window is wide because the record is found by its run key
     // rather than by when it claims to have happened, and one case deliberately
     // sends an instant a month old.
-    let start_us = (now - chrono::Duration::days(730)).timestamp_micros();
+    let start = now - chrono::Duration::days(lookback_days);
+    let start_us = start.timestamp_micros();
     let end_us = (now + chrono::Duration::days(1)).timestamp_micros();
     vec![
         ("window_start", (now - chrono::Duration::minutes(5)).to_rfc3339()),
@@ -699,6 +706,8 @@ fn time_vars(now: chrono::DateTime<chrono::Utc>) -> Vec<(&'static str, String)> 
         // rather than RFC 3339.
         ("window_start_us", start_us.to_string()),
         ("window_end_us", end_us.to_string()),
+        ("window_start_ns", start.timestamp_nanos_opt().unwrap_or_default().to_string()),
+        ("window_end_ns", ((now + chrono::Duration::days(1)).timestamp_nanos_opt().unwrap_or_default()).to_string()),
         ("now_ns", nanos.to_string()),
         ("now_ns_fractional", fractional.to_string()),
         ("now_us", now.timestamp_micros().to_string()),
@@ -887,7 +896,7 @@ expect:
     #[test]
     fn now_ns_is_close_to_now() {
         let now = chrono::Utc::now();
-        let vars: std::collections::HashMap<_, _> = time_vars(now).into_iter().collect();
+        let vars: std::collections::HashMap<_, _> = time_vars(now, 730).into_iter().collect();
         let sent: i128 = vars["now_ns"].parse().expect("an integer");
         let actual = now.timestamp_nanos_opt().unwrap() as i128;
         assert!((sent - actual).abs() < 1_000_000_000, "sent {sent}, now {actual}");
@@ -900,17 +909,29 @@ expect:
     #[test]
     fn now_ns_fractional_carries_known_low_digits() {
         let now = chrono::Utc::now();
-        let vars: std::collections::HashMap<_, _> = time_vars(now).into_iter().collect();
+        let vars: std::collections::HashMap<_, _> = time_vars(now, 730).into_iter().collect();
         let value = &vars["now_ns_fractional"];
         assert!(value.ends_with("123456789"), "got {value}");
         let seconds: i64 = value[..value.len() - 9].parse().expect("an integer");
         assert_eq!(seconds, now.timestamp());
     }
 
+    /// Some stores cap how far a query may reach back — Loki 3.1.1 refuses a
+    /// range over 30d1h — so the window is an adapter's property, not a
+    /// constant the corpus imposes on every store.
+    #[test]
+    fn the_lookback_window_is_configurable() {
+        let now = chrono::Utc::now();
+        let vars: std::collections::HashMap<_, _> = time_vars(now, 29).into_iter().collect();
+        let start: i128 = vars["window_start_ns"].parse().unwrap();
+        let days = (now.timestamp_nanos_opt().unwrap() as i128 - start) / 86_400_000_000_000;
+        assert_eq!(days, 29);
+    }
+
     #[test]
     fn microseconds_and_milliseconds_are_offered() {
         let now = chrono::Utc::now();
-        let vars: std::collections::HashMap<_, _> = time_vars(now).into_iter().collect();
+        let vars: std::collections::HashMap<_, _> = time_vars(now, 730).into_iter().collect();
         assert_eq!(vars["now_ms"], now.timestamp_millis().to_string());
         assert_eq!(vars["now_us"], now.timestamp_micros().to_string());
         assert_eq!(vars["now_s"], now.timestamp().to_string());
@@ -966,7 +987,7 @@ expect:
     #[test]
     fn the_backdated_variables_are_the_ages_they_claim() {
         let now = chrono::Utc::now();
-        let vars: std::collections::HashMap<_, _> = time_vars(now).into_iter().collect();
+        let vars: std::collections::HashMap<_, _> = time_vars(now, 730).into_iter().collect();
         let day: i128 = 86_400_000_000_000;
         let reference = now.timestamp_nanos_opt().unwrap() as i128;
         let one: i128 = vars["now_minus_1d_ns"].parse().expect("an integer");
