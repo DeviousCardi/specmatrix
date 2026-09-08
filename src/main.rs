@@ -65,6 +65,14 @@ enum Command {
         #[arg(long)]
         backend: String,
     },
+    /// Render a matrix.json as a single static page.
+    Render {
+        /// Path to a matrix.json produced by `specmatrix matrix`
+        matrix: PathBuf,
+        /// Where to write the page. Defaults to matrix.html beside the JSON.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Run one suite against several backends and write the matrix.
     Matrix {
         /// Comma-separated adapter names
@@ -129,6 +137,26 @@ fn main() -> Result<()> {
 
         Command::Down { backend } => docker::down(&backend),
 
+        Command::Render { matrix: path, out } => {
+            let text = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            let matrix: matrix::Matrix = serde_json::from_str(&text)
+                .with_context(|| format!("parsing {}", path.display()))?;
+            // The corpus commit lets a reader check out exactly the checks
+            // that produced these cells.
+            let commit = std::process::Command::new("git")
+                .args(["rev-parse", "--short", "HEAD"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+            let page = matrix.to_html(commit.as_deref());
+            let out = out.unwrap_or_else(|| path.with_file_name("matrix.html"));
+            std::fs::write(&out, page).with_context(|| format!("writing {}", out.display()))?;
+            println!("wrote {}", out.display());
+            Ok(())
+        }
+
         Command::Matrix { backends, suite, cases, adapter_dir, out, manage } => {
             let corpus = case::load_suite(&cases, &suite)
                 .with_context(|| format!("loading suite {suite}"))?;
@@ -175,7 +203,14 @@ fn main() -> Result<()> {
                 .with_context(|| format!("creating {}", dir.display()))?;
             std::fs::write(dir.join("matrix.json"), serde_json::to_string_pretty(&matrix)?)?;
             std::fs::write(dir.join("matrix.md"), matrix.to_markdown())?;
-            println!("wrote {}/matrix.json and matrix.md", dir.display());
+            let commit = std::process::Command::new("git")
+                .args(["rev-parse", "--short", "HEAD"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+            std::fs::write(dir.join("matrix.html"), matrix.to_html(commit.as_deref()))?;
+            println!("wrote {}/matrix.{{json,md,html}}", dir.display());
             Ok(())
         }
     }
