@@ -1,0 +1,41 @@
+id: remote-write/histogram-nan-count-finite-sum
+protocol: remote-write
+title: A histogram whose _count is NaN while _sum and buckets are finite
+
+rule:
+  basis: de-facto
+  reference: prometheus/3.6.0
+  section: histograms
+  text: >
+    Nothing in remote-write requires the three series of a classic histogram to
+    agree, because each is an independent series and the receiver has no
+    obligation to relate them. The specification is therefore silent on what a
+    receiver does with an inconsistent set, and Prometheus's own behaviour is
+    the de-facto rule: each series is stored as sent.
+  observed:
+    - https://github.com/vectordotdev/vector/issues/26228
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/histogram-nan-count-finite-sum.json
+
+expect:
+  ingest: accepted
+  readback:
+    - match: exact
+      series: specmatrix_mixed_seconds_count
+      on:
+        - field: value
+          as: float
+    - match: exact
+      series: specmatrix_mixed_seconds_sum
+      on:
+        - field: value
+          as: float
+
+notes: >
+  The failure this looks for is a receiver that reconciles the three series and
+  fabricates a value for the one it finds inconsistent. Vector emits count 0
+  here, which is worse than dropping the sample: nothing errors, and a
+  dashboard renders the fabricated zero as a measurement.

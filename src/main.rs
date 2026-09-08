@@ -10,6 +10,7 @@ mod es;
 mod matrix;
 mod otlp;
 mod query;
+mod remote_write;
 mod report;
 mod runner;
 mod stub;

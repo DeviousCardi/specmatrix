@@ -1,0 +1,33 @@
+id: remote-write/timestamp-far-future
+protocol: remote-write
+title: A sample an hour in the future is refused or kept, never accepted and dropped
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: samples
+  text: >
+    Nothing in remote-write bounds a sample's timestamp, but most stores refuse
+    samples too far ahead of their own clock, which is a reasonable defence
+    against a sender with a broken one. Refusing is a conformant answer.
+    Answering 2xx and discarding is not: clock skew is common and the sender is
+    told nothing.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/timestamp-far-future.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: present
+    series: specmatrix_future_gauge
+    on:
+      - field: value
+        as: float
+
+notes: >
+  An hour, not a year, because an hour is the scale of real clock skew between
+  a container and its host. A store that keeps it and one that refuses it are
+  both defensible; the row records which.

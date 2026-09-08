@@ -1,0 +1,12 @@
+{
+  "timeseries": [
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_latency_seconds_bucket"},
+        {"name": "le", "value": "+Inf"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": 3, "timestamp": "{{ now_ms }}"}]
+    }
+  ]
+}

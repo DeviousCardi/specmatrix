@@ -1,0 +1,30 @@
+id: remote-write/empty-label-value
+protocol: remote-write
+title: A label with an empty value is equivalent to no label at all
+
+rule:
+  basis: spec
+  spec: prometheus/data-model
+  section: labels
+  text: >
+    A label with an empty value is considered equivalent to a label that does
+    not exist. Dropping it is therefore correct, and so is keeping it as long
+    as the series identity is unchanged — which makes this a case to record
+    rather than to judge.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/empty-label-value.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    series: specmatrix_empty_label_gauge
+    on: [labels]
+
+notes: >
+  `present` rather than `exact` deliberately. Both behaviours are permitted, so
+  an `exact` check would fail every store that follows the data model
+  correctly. The result line shows which of the two each store chose.

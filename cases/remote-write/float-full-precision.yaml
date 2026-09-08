@@ -1,0 +1,31 @@
+id: remote-write/float-full-precision
+protocol: remote-write
+title: A value needing all 53 bits of mantissa survives the round trip
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: sample
+  text: >
+    A Sample value is an IEEE 754 double. A store that keeps it as a double
+    returns every digit; one that renders through a 32-bit float, or formats
+    with a fixed number of decimal places, silently changes the number.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/float-full-precision.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    series: specmatrix_precise_gauge
+    on:
+      - field: value
+        as: float
+
+notes: >
+  1234567890.1234567 is chosen so that the failure is visible: a float32 round
+  trip gives 1234567936, and a "%.2f" format gives 1234567890.12. Both are
+  values a dashboard would render without complaint.

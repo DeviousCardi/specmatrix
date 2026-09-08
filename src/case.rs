@@ -69,7 +69,7 @@ impl Send {
 pub struct Expect {
     /// `accepted`, `rejected`, or `accepted-or-rejected`
     pub ingest: String,
-    pub readback: Option<ReadbackExpect>,
+    pub readback: Option<Readbacks>,
     /// A query-semantics check: run this query and compare which records come
     /// back. Mutually exclusive with `readback` in practice — a check asserts
     /// either what one record became or which records a query returns.
@@ -101,19 +101,43 @@ fn default_order() -> String {
     "any".to_string()
 }
 
+/// One read-back assertion, or several.
+///
+/// Several are needed the first time one request carries more than one thing
+/// worth asserting on. `histogram-nan-count` sends a stale histogram and an
+/// unrelated gauge together, and the finding is precisely that the second must
+/// survive the first: one assertion says the gauge is present, another says the
+/// histogram is absent, and a check that could only make one of them would be
+/// testing half of what it exists to test.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum Readbacks {
+    One(ReadbackExpect),
+    Many(Vec<ReadbackExpect>),
+}
+
+impl Readbacks {
+    pub fn all(&self) -> Vec<&ReadbackExpect> {
+        match self {
+            Readbacks::One(one) => vec![one],
+            Readbacks::Many(many) => many.iter().collect(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ReadbackExpect {
     /// `exact`: the record must be present and the listed fields unchanged.
     /// `present`: the record must be present; fields are reported, not judged.
+    /// `absent`: the record must not be there.
     #[serde(rename = "match")]
     pub match_: String,
     #[serde(default)]
     pub on: Vec<FieldSpec>,
     /// Which series a check asserts on, by name. Protocols that send several
     /// series in one request need it; a check usually asserts on one of them.
-    /// Read by the remote-write read-back in 0.3; declared now because the
-    /// case that needs it is already in the corpus.
-    #[allow(dead_code)]
+    /// Rendered into the adapter's read-back as `{{ series }}`, so which query
+    /// finds a named series stays the adapter's business.
     pub series: Option<String>,
 }
 

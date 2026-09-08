@@ -1,0 +1,32 @@
+id: remote-write/invalid-label-name
+protocol: remote-write
+title: A label name starting with a digit is refused or recorded, never lost
+
+rule:
+  basis: spec
+  spec: prometheus/data-model
+  section: labels
+  text: >
+    Under the legacy validation scheme a label name must match
+    [a-zA-Z_][a-zA-Z0-9_]*, so "1zone" is invalid. Prometheus 3 introduced a
+    UTF-8 scheme under which it is accepted, so the conformant answer depends
+    on which scheme the receiver runs and both are recorded rather than one
+    being called right.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/invalid-label-name.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: present
+    series: specmatrix_bad_label_gauge
+    on: [labels]
+
+notes: >
+  Written as accepted-or-rejected because the answer is version-dependent, and
+  a case that hard-coded one scheme would report a store as wrong for running
+  the other. What the case still catches is the third behaviour: 2xx followed
+  by a series that lost the label or never appeared.

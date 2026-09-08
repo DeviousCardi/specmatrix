@@ -1,0 +1,33 @@
+id: remote-write/stale-marker-then-resume
+protocol: remote-write
+title: A finite sample after a stale marker restarts the series
+
+rule:
+  basis: spec
+  spec: prometheus/data-model
+  section: staleness
+  text: >
+    A stale marker ends a series at its timestamp; it does not delete it. A
+    later finite sample starts it again, which is what happens every time a
+    scrape target goes away and comes back. A store that treats the marker as
+    permanent loses every sample after a target restarts.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/stale-marker-then-resume.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    series: specmatrix_resumed_gauge
+    on:
+      - field: value
+        as: float
+
+notes: >
+  The counterpart to stale-marker-hides-series, and the reason that one is not
+  enough on its own: a store that ignored the marker entirely would pass this
+  check and fail the other, and a store that treated it as a delete would pass
+  the other and fail this. Read together the pair pins the behaviour down.

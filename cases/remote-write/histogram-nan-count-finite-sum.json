@@ -1,0 +1,26 @@
+{
+  "timeseries": [
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_mixed_seconds_bucket"},
+        {"name": "le", "value": "+Inf"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": 5, "timestamp": "{{ now_ms }}"}]
+    },
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_mixed_seconds_sum"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": 1.25, "timestamp": "{{ now_ms }}"}]
+    },
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_mixed_seconds_count"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": "NaN", "timestamp": "{{ now_ms }}"}]
+    }
+  ]
+}

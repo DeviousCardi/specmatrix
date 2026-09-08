@@ -236,7 +236,16 @@ impl Runner {
             }
         }
 
-        let response = self.send(&protocol.ingest, &vars, body)?;
+        // The encoding's own required headers, filled in where the adapter
+        // has not declared them. A remote-write body without
+        // `Content-Encoding: snappy` is unidentifiable, and the receiver
+        // answers a decompression error that names neither the header nor us.
+        let mut ingest = protocol.ingest.clone();
+        for (name, value) in crate::encode::headers_for(&encoding) {
+            ingest.headers.entry(name.to_string()).or_insert_with(|| value.to_string());
+        }
+
+        let response = self.send(&ingest, &vars, body)?;
         let status = response.status;
         let accepted = (200..300).contains(&status);
 
@@ -288,7 +297,7 @@ impl Runner {
             });
         }
 
-        let Some(expect) = case.expect.readback.as_ref() else {
+        let Some(expects) = case.expect.readback.as_ref() else {
             return Ok(self.result(
                 case,
                 Verdict::Pass,
@@ -303,14 +312,81 @@ impl Runner {
             ));
         };
 
-        match self.read_back(readback, &vars)? {
-            None => Ok(self.result(
-                case,
+        // Every assertion the case makes, each with its own read. A case with
+        // one is the ordinary shape and reads exactly as it did before; a case
+        // with several fails if any of them does, and the line names which.
+        let mut verdict = Verdict::Pass;
+        let mut details = Vec::new();
+        for expect in expects.all() {
+            let mut vars = vars.clone();
+            if let Some(series) = expect.series.as_deref() {
+                vars.insert("series", series.to_string());
+                // Built here rather than in the adapter because only the
+                // runner knows both halves: the case names the series, the
+                // adapter names the run-key label, and which of PromQL's two
+                // selector forms is legal depends on the name.
+                vars.insert(
+                    "series_selector",
+                    crate::remote_write::series_selector(
+                        series,
+                        self.backend.run_key_field.as_deref(),
+                        vars.get("run_key").map(String::as_str).unwrap_or_default(),
+                    ),
+                );
+            }
+            let (one, detail) = self
+                .evaluate_readback(case, expect, readback, &vars, status, &reported, &rendered)?;
+            if one == Verdict::Alter {
+                verdict = Verdict::Alter;
+            }
+            details.push(detail);
+        }
+        Ok(self.result(case, verdict, details.join(" | ")))
+    }
+
+    /// Reads one assertion back and decides what it says.
+    ///
+    /// Split out of `run_case` when a case gained the ability to make more than
+    /// one: the decision is per-assertion, and the case's verdict is the worst
+    /// of them.
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_readback(
+        &self,
+        case: &Case,
+        expect: &crate::case::ReadbackExpect,
+        readback: &Readback,
+        vars: &Vars,
+        status: u16,
+        reported: &str,
+        rendered: &[u8],
+    ) -> Result<(Verdict, String)> {
+        // Named when the case named a series, so a line covering several
+        // assertions says which one each half is about.
+        let label = expect.series.as_deref().map(|s| format!("{s}: ")).unwrap_or_default();
+        let found = self.read_back(readback, vars)?;
+
+        // `absent` asserts that a record is *not* there. It is the only way to
+        // check a write whose purpose is to end something — a remote-write
+        // stale marker, a deletion — and `read_back` already waits out the full
+        // timeout before concluding nothing arrived, which is what stops a
+        // store slower than the poll from reading as compliant here.
+        if expect.match_ == "absent" {
+            return Ok(match found {
+                None => (Verdict::Pass, format!("{label}absent, as the check requires")),
+                Some(_) => (
+                    Verdict::Alter,
+                    format!("{label}still queryable when the check requires it to be gone"),
+                ),
+            });
+        }
+
+        match found {
+            None => Ok((
                 Verdict::Alter,
-                format!("accepted ({status}) but never became queryable{reported}"),
+                format!("{label}accepted ({status}) but never became queryable{reported}"),
             )),
             Some(record) => {
-                let (sent, sent_was_lossy) = parse_sent(&rendered);
+                let (sent, sent_was_lossy) = parse_sent(rendered);
 
                 // Every field the check names, read once, with the kind it
                 // declared. Reading a value is not rewriting it: the kind
@@ -327,7 +403,7 @@ impl Runner {
                     readings.push((
                         field.to_string(),
                         kind,
-                        logical_field_for(&case.protocol, &sent, field),
+                        logical_field_for(&case.protocol, &sent, field, expect.series.as_deref()),
                         self.field_of(readback, &record, field),
                     ));
                 }
@@ -365,26 +441,23 @@ impl Runner {
                             }
                         })
                         .collect();
-                    return Ok(self.result(case, Verdict::Alter, replaced.join("; ")));
+                    return Ok((Verdict::Alter, format!("{label}{}", replaced.join("; "))));
                 }
 
                 match expect.match_.as_str() {
-                    "exact" if observed.is_empty() => Ok(self.result(
-                        case,
-                        Verdict::Pass,
-                        format!("{status}, round trip intact{reported}"),
-                    )),
-                    "exact" => Ok(self.result(case, Verdict::Alter, observed.join("; "))),
+                    "exact" if observed.is_empty() => {
+                        Ok((Verdict::Pass, format!("{label}{status}, round trip intact{reported}")))
+                    }
+                    "exact" => Ok((Verdict::Alter, format!("{label}{}", observed.join("; ")))),
                     // `present` is for values the project has not adjudicated.
                     // Show what the backend stored so the divergence is visible,
                     // but do not call it a failure on the strength of a guess.
-                    "present" => Ok(self.result(
-                        case,
-                        Verdict::Pass,
-                        format!("recorded — {}", observed.join("; ")),
-                    )),
+                    "present" => {
+                        Ok((Verdict::Pass, format!("{label}recorded — {}", observed.join("; "))))
+                    }
                     other => anyhow::bail!(
-                        "case {} declares readback.match: {other:?}; expected `exact` or `present`",
+                        "case {} declares readback.match: {other:?}; expected `exact`, \
+                         `present` or `absent`",
                         case.id
                     ),
                 }
@@ -685,9 +758,11 @@ fn logical_field_for(
     protocol: &str,
     sent: &serde_json::Value,
     field: &str,
+    series: Option<&str>,
 ) -> Option<serde_json::Value> {
     match protocol {
         "es-bulk" => crate::es::logical_field(sent, field),
+        "remote-write" => crate::remote_write::logical_field(sent, field, series),
         _ => crate::otlp::logical_field(sent, field),
     }
 }
@@ -757,6 +832,12 @@ fn time_vars(
         ("now_us", now.timestamp_micros().to_string()),
         ("now_ms", now.timestamp_millis().to_string()),
         ("now_s", now.timestamp().to_string()),
+        // Milliseconds, because remote-write timestamps are milliseconds. A
+        // series needs an earlier sample to be ended by a later one, and both
+        // have to be inside the store's ingest window.
+        ("now_minus_10s_ms", (now - chrono::Duration::seconds(10)).timestamp_millis().to_string()),
+        ("now_minus_1h_ms", (now - chrono::Duration::hours(1)).timestamp_millis().to_string()),
+        ("now_plus_1h_ms", (now + chrono::Duration::hours(1)).timestamp_millis().to_string()),
         ("now_minus_1d_ns", (nanos - day).to_string()),
         ("now_minus_30d_ns", (nanos - 30 * day).to_string()),
     ]
@@ -992,6 +1073,80 @@ expect:
         let result = runner.run_case("otlp-logs", &case).expect("no harness error");
         assert_eq!(result.verdict, Verdict::Alter);
         assert!(result.detail.contains("never became queryable"), "{}", result.detail);
+    }
+
+    /// `absent` passes when nothing arrives. It waits out the whole poll
+    /// timeout first: a store slower than one read would otherwise look
+    /// compliant for the wrong reason, which is the failure mode that produced
+    /// a false finding in 0.2's query path.
+    #[test]
+    fn absent_passes_when_the_record_never_appears() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            ("/search", vec![Reply::json(200, r#"{"hits":[]}"#)]),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case = case_yaml("  readback:\n    match: absent");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Pass, "detail: {}", result.detail);
+        assert!(result.detail.contains("absent"), "{}", result.detail);
+        assert!(stub.paths().iter().filter(|p| p.contains("/search")).count() > 1, "polled once");
+    }
+
+    /// A write whose purpose was to end a series, and the series is still
+    /// there. Nothing errored, so only a read can see it.
+    #[test]
+    fn absent_is_an_alter_when_the_record_is_still_there() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            (
+                "/search",
+                vec![Reply::json(
+                    200,
+                    r#"{"hits":[{"message":"x","specmatrix.run":"{{RUNKEY}}"}]}"#,
+                )],
+            ),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case = case_yaml("  readback:\n    match: absent");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Alter, "detail: {}", result.detail);
+        assert!(result.detail.contains("still queryable"), "{}", result.detail);
+    }
+
+    /// One request, two assertions. The case fails if either does, and the
+    /// line says which — the shape `histogram-nan-count` needs, where a stale
+    /// series must not cost the unrelated one sent beside it.
+    #[test]
+    fn several_readbacks_are_all_asserted_and_the_worst_verdict_wins() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            (
+                "/search",
+                vec![Reply::json(
+                    200,
+                    r#"{"hits":[{"message":"specmatrix minimal record","specmatrix.run":"{{RUNKEY}}"}]}"#,
+                )],
+            ),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        // The first assertion holds, the second does not: the record the stub
+        // returns is present, and the check requires it gone.
+        let case = case_yaml(
+            "  readback:\n    - match: exact\n      series: kept\n      on: [body]\n    - match: absent\n      series: ended",
+        );
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Alter, "detail: {}", result.detail);
+        assert!(result.detail.contains("kept: "), "{}", result.detail);
+        assert!(result.detail.contains("ended: still queryable"), "{}", result.detail);
+    }
+
+    /// A single read-back keeps working written the way every existing case
+    /// writes it, so gaining a list changed no corpus file.
+    #[test]
+    fn a_single_readback_still_parses_and_reads_the_same() {
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        assert_eq!(case.expect.readback.as_ref().unwrap().all().len(), 1);
     }
 
     /// A refusal is a REJECT carrying the status and the store's own words, so

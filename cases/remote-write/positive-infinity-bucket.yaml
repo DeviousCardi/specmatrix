@@ -1,0 +1,35 @@
+id: remote-write/positive-infinity-bucket
+protocol: remote-write
+title: The +Inf bucket label survives as written
+
+rule:
+  basis: spec
+  spec: prometheus/data-model
+  section: histograms
+  text: >
+    A classic histogram is exposed as a set of _bucket series distinguished by
+    the `le` label, and every histogram has a bucket with `le="+Inf"` holding
+    the total count. A store that rewrites that label value — to "Inf", to
+    "inf", or to a number — breaks every query written against the histogram,
+    including the one Prometheus's own histogram_quantile generates.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/positive-infinity-bucket.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    series: specmatrix_latency_seconds_bucket
+    on:
+      - field: value
+        as: float
+      - labels
+
+notes: >
+  The `le` value is a label, which is a string, so "+Inf" here is text and not
+  the float. The distinction matters: a store that parses label values as
+  numbers when they look like numbers would round-trip this one as "+Inf" by
+  luck and fail on `le="0.1"`.

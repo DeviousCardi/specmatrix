@@ -1,0 +1,11 @@
+{
+  "timeseries": [
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_big_counter_total"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": 18446744073709551615, "timestamp": "{{ now_ms }}"}]
+    }
+  ]
+}

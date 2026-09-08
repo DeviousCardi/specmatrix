@@ -21,7 +21,31 @@ pub fn to_wire(native: &str, encoding: &str, payload: &[u8]) -> Result<Vec<u8>> 
     }
     match (native, encoding) {
         ("otlp-json", "otlp-protobuf") => otlp_logs_json_to_protobuf(payload),
+        ("remote-write-json", "remote-write-protobuf") => crate::remote_write::to_wire(payload),
         _ => anyhow::bail!("no encoder from {native} to {encoding}"),
+    }
+}
+
+/// Headers a wire encoding requires, whatever backend is receiving it.
+///
+/// These belong to the encoding rather than to any adapter: a remote-write
+/// receiver identifies the body by `Content-Encoding: snappy` and the protocol
+/// version by its own header, and every one of them needs the same three. An
+/// adapter that declares a header keeps it — the runner only fills in what is
+/// missing — so a store with an unusual content type is still describable, and
+/// a new adapter cannot fail in the confusing way an omitted
+/// `Content-Encoding` fails.
+pub fn headers_for(encoding: &str) -> &'static [(&'static str, &'static str)] {
+    match encoding {
+        "remote-write-protobuf" => &[
+            ("Content-Type", "application/x-protobuf"),
+            ("Content-Encoding", "snappy"),
+            ("X-Prometheus-Remote-Write-Version", "0.1.0"),
+        ],
+        "otlp-protobuf" => &[("Content-Type", "application/x-protobuf")],
+        "otlp-json" => &[("Content-Type", "application/json")],
+        "es-ndjson" => &[("Content-Type", "application/x-ndjson")],
+        _ => &[],
     }
 }
 
@@ -136,5 +160,34 @@ mod tests {
         let accepted = vec!["otlp-protobuf".to_string()];
         let offered = vec!["otlp-json".to_string()];
         assert_eq!(choose_encoding(&accepted, &offered), None);
+    }
+
+    #[test]
+    fn remote_write_json_becomes_a_snappy_block() {
+        let wire = to_wire(
+            "remote-write-json",
+            "remote-write-protobuf",
+            br#"{"timeseries":[{"labels":[{"name":"__name__","value":"g"}],
+                "samples":[{"value":1,"timestamp":1}]}]}"#,
+        )
+        .unwrap();
+        assert!(snap::raw::Decoder::new().decompress_vec(&wire).is_ok());
+    }
+
+    /// A remote-write body is unidentifiable without `Content-Encoding:
+    /// snappy`, and a receiver answers a confusing decompression error rather
+    /// than naming the missing header. Every adapter needs all three, so the
+    /// encoding carries them rather than each adapter repeating them.
+    #[test]
+    fn remote_write_carries_the_three_headers_a_receiver_needs() {
+        let headers = headers_for("remote-write-protobuf");
+        assert_eq!(headers.len(), 3);
+        assert!(headers.contains(&("Content-Encoding", "snappy")));
+        assert!(headers.contains(&("X-Prometheus-Remote-Write-Version", "0.1.0")));
+    }
+
+    #[test]
+    fn an_encoding_with_no_required_headers_asks_for_none() {
+        assert!(headers_for("loki-json").is_empty());
     }
 }

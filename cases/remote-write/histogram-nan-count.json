@@ -1,0 +1,41 @@
+{
+  "timeseries": [
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_latency_seconds_bucket"},
+        {"name": "le", "value": "0.1"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": "NaN", "timestamp": "{{ now_ms }}"}]
+    },
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_latency_seconds_bucket"},
+        {"name": "le", "value": "+Inf"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": "NaN", "timestamp": "{{ now_ms }}"}]
+    },
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_latency_seconds_sum"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": "NaN", "timestamp": "{{ now_ms }}"}]
+    },
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_latency_seconds_count"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": "NaN", "timestamp": "{{ now_ms }}"}]
+    },
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_unrelated_gauge"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": 7, "timestamp": "{{ now_ms }}"}]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+id: remote-write/series-with-no-samples
+protocol: remote-write
+title: A series carrying labels and no samples is accepted
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: timeseries
+  text: >
+    `samples` is a repeated field on TimeSeries, so a series with none is a
+    valid message. There is nothing for a receiver to store, so the only
+    conformant answers are to accept it and do nothing or to refuse it — not to
+    fail.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/series-with-no-samples.json
+
+expect:
+  ingest: accepted-or-rejected
+
+notes: >
+  No read-back, because nothing was sent to read. The case exists for the
+  answer at the door: this shape has produced index errors in receivers that
+  assume samples[0] exists.

@@ -1,0 +1,37 @@
+id: remote-write/out-of-order-series-in-batch
+protocol: remote-write
+title: Two series in one request are independent, whatever order they arrive in
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: samples
+  text: >
+    The ordering requirement is within a series. Nothing requires series in a
+    WriteRequest to be ordered relative to one another, so a request whose
+    second series carries older samples than its first is conformant and both
+    must survive.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/out-of-order-series-in-batch.json
+
+expect:
+  ingest: accepted
+  readback:
+    - match: exact
+      series: specmatrix_later_gauge
+      on:
+        - field: value
+          as: float
+    - match: exact
+      series: specmatrix_earlier_gauge
+      on:
+        - field: value
+          as: float
+
+notes: >
+  The control for out-of-order-samples-one-series. If this one fails, the other
+  is measuring a store that applies the within-series rule across the whole
+  request, and the two rows read together say so.

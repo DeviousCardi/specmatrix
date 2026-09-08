@@ -1,37 +1,55 @@
 id: remote-write/histogram-nan-count
-protocol: prometheus-remote-write
-title: A NaN histogram _count is a stale marker, not malformed input
+protocol: remote-write
+title: A NaN histogram _count is an ordinary value, not malformed input
 
 rule:
   basis: spec
   spec: prometheus/remote-write/1.0
-  section: stale-markers
+  section: sample
   text: >
-    Senders mark a series as stale by writing a sample whose value is NaN. Any
-    scrape target that disappears therefore produces NaN on its _count and
-    _bucket series. A receiver that treats NaN as malformed rejects ordinary,
-    conformant traffic.
+    A Sample value is an IEEE 754 double, and NaN is one. A histogram whose
+    _count, _sum and _bucket series all carry NaN is what a scrape of a target
+    that has produced no observations looks like after a division by zero, and
+    it is ordinary conformant traffic. A receiver that treats NaN as malformed
+    refuses it; one that reconciles the series and fabricates a replacement
+    value is worse.
   observed:
     - https://github.com/vectordotdev/vector/issues/26228
 
 send:
-  format: remote-write-protobuf
-  compression: snappy
-  body: cases/remote-write/histogram-nan-count.pb.json
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/histogram-nan-count.json
 
 expect:
   ingest: accepted
   readback:
-    # The stale series itself is not expected to appear. What must survive is the
-    # unrelated series sent in the same write request: rejecting the batch over
-    # one stale marker loses data that has nothing to do with it.
-    match: present
-    series: unrelated_gauge
-    on: [value, labels]
+    # Two assertions, because the finding is about both. The NaN must survive
+    # as NaN, and the unrelated gauge sent in the same request must survive at
+    # all: refusing or mangling a batch over one NaN costs data that has
+    # nothing to do with it.
+    - match: exact
+      series: specmatrix_latency_seconds_count
+      on:
+        - field: value
+          as: float
+    - match: exact
+      series: specmatrix_unrelated_gauge
+      on:
+        - field: value
+          as: float
+        - labels
 
 notes: >
-  This check has two failure modes and they are worth distinguishing in the
-  results. A 400 on the whole request is a REJECT and costs every sample batched
-  alongside the stale one. Accepting the request and emitting the histogram with
-  count 0 is an ALTER, and is worse: the value is fabricated, no error is raised,
-  and a dashboard renders it as a real measurement.
+  This is not a staleness check, and the distinction was got wrong the first
+  time this case was written. Prometheus marks a series stale with one specific
+  NaN payload, 0x7ff0000000000002; every other NaN is an ordinary value.
+  Confirmed against prom/prometheus:v3.6.0 on 2026-09-09 — the NaN sent here is
+  stored and reads back as "NaN", while the reserved payload ends the series.
+  stale-marker-hides-series covers that separately.
+
+  The check has two failure modes worth distinguishing. A 400 on the whole
+  request is a REJECT and costs every sample batched alongside. Accepting the
+  request and emitting the histogram with count 0 is an ALTER, and is worse:
+  the value is fabricated, no error is raised, and a dashboard renders it as a
+  real measurement.

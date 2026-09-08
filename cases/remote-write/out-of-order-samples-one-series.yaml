@@ -1,0 +1,31 @@
+id: remote-write/out-of-order-samples-one-series
+protocol: remote-write
+title: Samples out of order within a series are refused or accepted, not partly kept
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: samples
+  text: >
+    Samples within a series MUST be sent in timestamp order. A receiver may
+    refuse a request that breaks it. What it may not do is answer 2xx and keep
+    only part of the series, because the caller has no way to learn which part.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/out-of-order-samples-one-series.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: present
+    series: specmatrix_ooo_gauge
+    on:
+      - field: value
+        as: float
+
+notes: >
+  The value read back is the sample at the latest timestamp, so this records
+  which of the two the store kept. A store with out-of-order ingestion enabled
+  keeps both; one without keeps the newer and drops the older.

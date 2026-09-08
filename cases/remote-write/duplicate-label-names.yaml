@@ -1,0 +1,45 @@
+id: remote-write/duplicate-label-names
+protocol: remote-write
+title: A series with the same label name twice is refused
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: labels
+  text: >
+    Label names within a series MUST be unique. A duplicate makes the series
+    identity ambiguous, so there is no correct value for a receiver to keep.
+    Refusing the request is conformant and so, arguably, is storing one of the
+    two. Answering 2xx and storing neither is not: remote-write 1.0 has no
+    partial-success field, so a status code is the only thing the sender has to
+    go on, and a 2xx that means "dropped" leaves it nothing.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/duplicate-label-names.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: present
+    series: specmatrix_dup_gauge
+    on: [labels]
+
+notes: >
+  Written as accepted-or-rejected because a refusal is the good outcome and
+  passes, and because what this looks for is the third answer. A store that
+  refuses tells the caller; a store that keeps one of the labels is at least
+  visible; a store that answers 2xx and keeps nothing has lost data silently,
+  which read-back sees as never becoming queryable.
+
+  Prometheus 3.6.0 is in the third group, confirmed on 2026-09-09. It answers
+  204, logs `Invalid labels for series ... duplicated_label=zone` at WARN,
+  increments prometheus_api_remote_write_invalid_labels_samples_total, and
+  stores nothing — /api/v1/series returns an empty set for the metric. The
+  sender is told the write succeeded. This is not a slip so much as a
+  consequence of the protocol version: remote-write 1.0 has no way to report a
+  partial rejection, and failing the whole request over one bad series would
+  cost every good series batched with it. Remote-write 2.0 added written-sample
+  response headers for exactly this, which is what makes it worth asking
+  upstream rather than simply filing.

@@ -1,0 +1,33 @@
+id: remote-write/counter-u64-max
+protocol: remote-write
+title: A counter at 2^64-1 does not fit in the float the protocol carries
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: sample
+  text: >
+    A Sample carries its value as a double. A counter that reaches 2^64-1 —
+    which a 64-bit counter exported by a non-Prometheus system can — cannot be
+    represented exactly, so some rounding is unavoidable and conformant. What
+    is worth recording is which value each store ends up holding.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/counter-u64-max.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    series: specmatrix_big_counter_total
+    on:
+      - field: value
+        as: float
+
+notes: >
+  Recorded rather than judged. The loss happens in the wire format, before any
+  store sees the value, so calling a store wrong for it would be blaming it for
+  the protocol. `present` shows what each one returned so a reader can see
+  whether they agree.

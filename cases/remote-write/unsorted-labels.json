@@ -1,0 +1,13 @@
+{
+  "timeseries": [
+    {
+      "labels": [
+        {"name": "zone", "value": "b"},
+        {"name": "__name__", "value": "specmatrix_unsorted_gauge"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"},
+        {"name": "alpha", "value": "a"}
+      ],
+      "samples": [{"value": 1, "timestamp": "{{ now_ms }}"}]
+    }
+  ]
+}
