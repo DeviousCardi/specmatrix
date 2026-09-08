@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use serde::Serialize;
+use serde_json::Value;
 use std::time::{Duration, Instant};
 
 use crate::backend::{Auth, Backend, Readback, Request};
@@ -189,6 +190,16 @@ impl Runner {
             }
         };
 
+        // Clear this case's stream before writing to it. The adapter has
+        // carried a teardown request since 0.1 and nothing ever sent it, so a
+        // rerun tested whatever the previous run left behind — which a query
+        // check cannot tolerate, since it asserts on exactly which rows come
+        // back. Sent before rather than after: a run that crashes leaves state,
+        // and an "after" teardown is precisely the one that did not run.
+        if let Some(teardown) = self.backend.teardown.as_ref() {
+            let _ = self.send(teardown, &vars, Vec::new());
+        }
+
         let response = self.send(&protocol.ingest, &vars, body)?;
         let status = response.status;
         let accepted = (200..300).contains(&status);
@@ -214,6 +225,32 @@ impl Runner {
             None
         };
         let reported = describe_report(reported.as_ref());
+
+        if let Some(expect_query) = case.expect.query.as_ref() {
+            let Some(query) = protocol.query.as_ref() else {
+                return Ok(self.result(
+                    case,
+                    Verdict::NotApplicable,
+                    "adapter declares no query endpoint for this protocol".into(),
+                ));
+            };
+            let returned = self.run_query(case, query, expect_query, &vars)?;
+            let difference = match expect_query.order.as_str() {
+                "any" => crate::query::compare(&expect_query.returns, &returned),
+                "as-listed" => crate::query::compare_ordered(&expect_query.returns, &returned),
+                other => anyhow::bail!(
+                    "case {} declares query.order: {other:?}; expected `any` or `as-listed`",
+                    case.id
+                ),
+            };
+            return Ok(match difference {
+                None => self.result(case, Verdict::Pass, format!("{status}, query agrees")),
+                // The data is intact and the same query answers differently.
+                // Nothing errored and a dashboard rendered, which is what makes
+                // this class worth a tool.
+                Some(detail) => self.result(case, Verdict::Alter, detail),
+            });
+        }
 
         let Some(expect) = case.expect.readback.as_ref() else {
             return Ok(self.result(case, Verdict::Pass, format!("{status}, no read-back declared{reported}")));
@@ -330,6 +367,9 @@ impl Runner {
         let mut vars = Vars::new();
         vars.insert("run_key", run_key);
         vars.insert("suite_stream", stream);
+        if let Some(field) = self.backend.run_key_field.clone() {
+            vars.insert("run_key_field", field);
+        }
         for (key, value) in time_vars(chrono::Utc::now()) {
             vars.insert(key, value);
         }
@@ -369,6 +409,64 @@ impl Runner {
             eprintln!("<-- {status} {}", first_line(&out.text()));
         }
         Ok(out)
+    }
+
+    /// Runs a query check's body and returns the marker of every row that came
+    /// back.
+    ///
+    /// Polls for the same reason read-back does: a write is usually
+    /// acknowledged before it is searchable. It settles once the row count
+    /// stops changing, rather than once it reaches the expected count — a check
+    /// that expects fewer rows than the backend will return has to see the
+    /// extra ones, and that is the divergence such a check is looking for.
+    fn run_query(
+        &self,
+        case: &Case,
+        query: &crate::backend::Query,
+        expect: &crate::case::QueryExpect,
+        vars: &Vars,
+    ) -> Result<Vec<String>> {
+        let path = if expect.body.exists() {
+            expect.body.clone()
+        } else {
+            case.dir.join(expect.body.file_name().unwrap_or_default())
+        };
+        let raw = std::fs::read(&path)
+            .with_context(|| format!("reading query body {}", path.display()))?;
+        let rendered = template::render_bytes(&raw, vars);
+        let body: Value = serde_json::from_slice(&rendered)
+            .with_context(|| format!("parsing query body {}", path.display()))?;
+
+        let marker_pointer = format!("{}/{}", query.marker_pointer, expect.marker);
+        let deadline = Instant::now() + Duration::from_millis(query.poll.timeout_ms);
+        let mut last: Option<Vec<String>> = None;
+        loop {
+            let response = self.send_json(&query.request, vars, &body)?;
+            if (200..300).contains(&response.status) {
+                if let Ok(value) = serde_json::from_slice::<Value>(&response.body) {
+                    let rows =
+                        crate::query::returned_markers(&value, &query.records, &marker_pointer);
+                    // Two identical reads in a row means the index has settled.
+                    if last.as_deref() == Some(rows.as_slice()) {
+                        return Ok(rows);
+                    }
+                    last = Some(rows);
+                }
+            }
+            if Instant::now() >= deadline {
+                return Ok(last.unwrap_or_default());
+            }
+            std::thread::sleep(Duration::from_millis(query.poll.interval_ms));
+        }
+    }
+
+    fn send_json(&self, req: &Request, vars: &Vars, body: &Value) -> Result<Response> {
+        let mut with_type = req.clone();
+        with_type
+            .headers
+            .entry("Content-Type".to_string())
+            .or_insert_with(|| "application/json".to_string());
+        self.send(&with_type, vars, body.to_string().into_bytes())
     }
 
     /// Polls until the record appears or the adapter's timeout elapses.
@@ -501,6 +599,7 @@ fn logical_field_for(
     field: &str,
 ) -> Option<serde_json::Value> {
     match protocol {
+        "es-bulk" => crate::es::logical_field(sent, field),
         _ => crate::otlp::logical_field(sent, field),
     }
 }
@@ -596,14 +695,18 @@ fn first_record(
 /// UTF-8 is deliberate in this corpus, and a strict parse would fail and make
 /// every field read as absent.
 fn parse_sent(bytes: &[u8]) -> (serde_json::Value, bool) {
-    match serde_json::from_slice::<serde_json::Value>(bytes) {
-        Ok(value) => (value, false),
-        Err(_) => {
-            let lossy = String::from_utf8_lossy(bytes);
-            let value = serde_json::from_str(&lossy).unwrap_or(serde_json::Value::Null);
-            (value, true)
-        }
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) {
+        return (value, false);
     }
+    // NDJSON is several JSON documents rather than one, so a `_bulk` body fails
+    // a strict parse without being malformed. Try it before concluding the
+    // payload is not valid UTF-8, or every bulk case reads as lossy and every
+    // field in it reads as absent.
+    if let Ok(value) = crate::es::parse_bulk(bytes) {
+        return (value, false);
+    }
+    let lossy = String::from_utf8_lossy(bytes);
+    (serde_json::from_str(&lossy).unwrap_or(serde_json::Value::Null), true)
 }
 
 fn first_line(text: &str) -> String {
@@ -673,6 +776,15 @@ expect:
 
         assert_eq!(result.verdict, Verdict::NotApplicable);
         assert!(result.detail.contains("otlp-json"), "detail: {}", result.detail);
+    }
+
+    /// NDJSON is not JSON. A `_bulk` body must not be mistaken for a payload
+    /// carrying invalid UTF-8, which would make every field read as absent.
+    #[test]
+    fn parse_sent_reads_ndjson_without_calling_it_lossy() {
+        let (value, lossy) = parse_sent(b"{\"index\":{}}\n{\"message\":\"hi\"}\n");
+        assert!(!lossy);
+        assert_eq!(crate::es::logical_field(&value, "message"), Some(json!("hi")));
     }
 
     #[test]

@@ -1,0 +1,39 @@
+id: es-bulk/must-not-absent-field
+protocol: es-bulk
+title: must_not over a field some documents lack returns those documents
+
+rule:
+  basis: de-facto
+  spec: elasticsearch/query-dsl
+  section: bool.must_not
+  text: >
+    Elasticsearch defines the reference behaviour for this protocol. A must_not
+    clause excludes documents that match the inner query and retains every
+    other document, including those where the field does not exist and those
+    where it is null, because neither matches the term. A backend claiming the
+    Elasticsearch query API has to match that rather than SQL intuition, under
+    which a comparison against a missing value is neither true nor false and
+    the row is dropped. The difference is silent: no error, simply fewer rows.
+  observed:
+    - https://github.com/quickwit-oss/quickwit/issues/6474
+
+send:
+  format: es-ndjson
+  body: cases/es-bulk/absent-field.ndjson
+
+expect:
+  ingest: accepted
+  query:
+    body: cases/es-bulk/must-not-absent-field.query.json
+    returns: [with-field-other, field-absent, field-null]
+
+notes: >
+  The expectation was copied from what Elasticsearch 8.15.0 returned on
+  2026-09-08, not written from reasoning about what it ought to do:
+  [field-absent, field-null, with-field-other].
+
+  `status` is a number on purpose. A string field is dynamically mapped as
+  `text` with a `.keyword` subfield, so a term query on it matches nothing for
+  reasons that have nothing to do with must_not — and a backend failing for
+  that reason would look like it failed this check. That behaviour is worth
+  isolating in a case of its own rather than confounding this one.

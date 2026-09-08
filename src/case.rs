@@ -54,9 +54,38 @@ impl Send {
 
 #[derive(Debug, Deserialize)]
 pub struct Expect {
-    /// `accepted` or `rejected`
+    /// `accepted`, `rejected`, or `accepted-or-rejected`
     pub ingest: String,
     pub readback: Option<ReadbackExpect>,
+    /// A query-semantics check: run this query and compare which records come
+    /// back. Mutually exclusive with `readback` in practice — a check asserts
+    /// either what one record became or which records a query returns.
+    pub query: Option<QueryExpect>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QueryExpect {
+    /// Path to the query, in the protocol's own language, kept beside the case
+    /// so a maintainer can send it by hand. It goes to every backend
+    /// unchanged: a backend claiming to speak this protocol has to answer the
+    /// protocol's queries rather than a translation of them.
+    pub body: PathBuf,
+    /// The marker of every record the query must return.
+    pub returns: Vec<String>,
+    /// Field in each stored document holding the marker.
+    #[serde(default = "default_marker")]
+    pub marker: String,
+    /// `any` (default) compares as a set; `as-listed` asserts the order too.
+    #[serde(default = "default_order")]
+    pub order: String,
+}
+
+fn default_marker() -> String {
+    "doc".to_string()
+}
+
+fn default_order() -> String {
+    "any".to_string()
 }
 
 #[derive(Debug, Deserialize)]

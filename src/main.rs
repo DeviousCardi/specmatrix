@@ -4,8 +4,10 @@
 mod backend;
 mod compare;
 mod encode;
+mod es;
 mod case;
 mod otlp;
+mod query;
 mod report;
 mod runner;
 mod template;
