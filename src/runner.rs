@@ -768,6 +768,426 @@ fn first_line(text: &str) -> String {
     if line.len() > 120 { format!("{}…", &line[..120]) } else { line.to_string() }
 }
 
+/// End-to-end tests of the verdict pipeline against a stub backend.
+///
+/// These exist because every decision the runner makes was previously
+/// observable only by pointing it at a real container: whether an absent record
+/// becomes an ALTER, whether a failing control stops the suite, whether
+/// teardown runs before ingest. A store that silently drops a record does so on
+/// its own schedule, so the interesting cases could not be reproduced on
+/// demand. Here they can be described exactly.
+#[cfg(test)]
+mod pipeline {
+    use super::*;
+    use crate::stub::{self, Reply};
+
+    /// An adapter pointed at the stub. `readback` is the response body the
+    /// query returns, in order; the last one repeats.
+    fn runner_for(url: &str, readback: Vec<Reply>, ingest: Reply) -> Runner {
+        let adapter: Backend = serde_yaml::from_str(
+            r#"
+name: stub
+protocols:
+  otlp-logs:
+    formats: [otlp-json]
+    ingest:
+      request: POST /ingest
+    readback:
+      request: POST /search
+      records: /hits
+      fields:
+        body: /message
+        severityText: /severity
+      poll:
+        interval_ms: 10
+        timeout_ms: 120
+"#,
+        )
+        .expect("adapter parses");
+        let _ = ingest;
+        Runner::new(adapter, url.to_string(), false).expect("runner builds")
+    }
+
+    fn case_yaml(extra: &str) -> Case {
+        let mut case: Case = serde_yaml::from_str(&format!(
+            r#"
+id: otlp-logs/minimal-record
+protocol: otlp-logs
+title: stub case
+send:
+  format: otlp-json
+  body: cases/otlp-logs/minimal-record.json
+expect:
+  ingest: accepted
+{extra}
+"#
+        ))
+        .expect("case parses");
+        case.dir = std::path::PathBuf::from("cases/otlp-logs");
+        case
+    }
+
+    fn record_matching(run_key_holder: &str) -> String {
+        format!(
+            r#"{{"hits":[{{"message":"specmatrix minimal record","severity":"INFO","specmatrix.run":"{run_key_holder}"}}]}}"#
+        )
+    }
+
+    /// A write that lands and reads back unchanged is the only thing that
+    /// should produce a PASS. The stub echoes the run key the runner generated,
+    /// because it is random per case and no canned record could match it.
+    #[test]
+    fn a_record_that_reads_back_unchanged_passes() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            (
+                "/search",
+                vec![Reply::json(
+                    200,
+                    r#"{"hits":[{"message":"specmatrix minimal record","severity":"INFO","specmatrix.run":"{{RUNKEY}}"}]}"#,
+                )],
+            ),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body, severityText]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Pass, "detail: {}", result.detail);
+        assert!(result.detail.contains("round trip intact"), "{}", result.detail);
+    }
+
+    /// A value that comes back changed is an ALTER naming both sides, so a
+    /// reader can see what happened without rerunning anything.
+    #[test]
+    fn a_changed_value_is_an_alter_naming_what_was_sent_and_read() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            (
+                "/search",
+                vec![Reply::json(
+                    200,
+                    r#"{"hits":[{"message":"TRUNCATED","severity":"INFO","specmatrix.run":"{{RUNKEY}}"}]}"#,
+                )],
+            ),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Alter);
+        assert!(result.detail.contains("specmatrix minimal record"), "{}", result.detail);
+        assert!(result.detail.contains("TRUNCATED"), "{}", result.detail);
+    }
+
+    /// `present` reports the stored value and does not judge it. This is how
+    /// the corpus holds a divergence it has not adjudicated.
+    #[test]
+    fn present_mode_reports_a_difference_without_calling_it_a_failure() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            (
+                "/search",
+                vec![Reply::json(
+                    200,
+                    r#"{"hits":[{"message":"something else","severity":"INFO","specmatrix.run":"{{RUNKEY}}"}]}"#,
+                )],
+            ),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case = case_yaml("  readback:\n    match: present\n    on: [body]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Pass);
+        assert!(result.detail.starts_with("recorded"), "{}", result.detail);
+        assert!(result.detail.contains("something else"), "{}", result.detail);
+    }
+
+    /// A record left behind by an earlier run must not be mistaken for this
+    /// one's, or a store that dropped the write looks like it kept it.
+    #[test]
+    fn a_leftover_record_from_another_run_does_not_count() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            (
+                "/search",
+                vec![Reply::json(
+                    200,
+                    r#"{"hits":[{"message":"from an earlier run","severity":"INFO","specmatrix.run":"sm-deadbeef"}]}"#,
+                )],
+            ),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Alter);
+        assert!(result.detail.contains("never became queryable"), "{}", result.detail);
+    }
+
+    /// Most stores acknowledge a write before it is queryable, so read-back
+    /// polls. A store that is merely slow must not be reported as one that
+    /// lost the record.
+    #[test]
+    fn a_record_that_appears_after_a_poll_still_passes() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            (
+                "/search",
+                vec![
+                    Reply::json(200, r#"{"hits":[]}"#),
+                    Reply::json(200, r#"{"hits":[]}"#),
+                    Reply::json(
+                        200,
+                        r#"{"hits":[{"message":"specmatrix minimal record","severity":"INFO","specmatrix.run":"{{RUNKEY}}"}]}"#,
+                    ),
+                ],
+            ),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Pass, "detail: {}", result.detail);
+    }
+
+    /// Accepted, then never queryable. The failure the project exists for, and
+    /// the one a caller cannot see.
+    #[test]
+    fn a_record_that_never_becomes_queryable_is_an_alter() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            ("/search", vec![Reply::json(200, r#"{"hits":[]}"#)]),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Alter);
+        assert!(result.detail.contains("never became queryable"), "{}", result.detail);
+    }
+
+    /// A refusal is a REJECT carrying the status and the store's own words, so
+    /// a reader can act on it without rerunning anything.
+    #[test]
+    fn a_refused_write_is_a_reject_naming_the_status_and_message() {
+        let stub = stub::start(vec![(
+            "/ingest",
+            vec![Reply::json(400, r#"{"error":"invalid unicode code point"}"#)],
+        )]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(400, ""));
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Reject);
+        assert!(result.detail.starts_with("400"), "{}", result.detail);
+        assert!(result.detail.contains("invalid unicode"), "{}", result.detail);
+    }
+
+    /// A store that accepts a payload the check expects to be refused has taken
+    /// something it said it would not.
+    #[test]
+    fn accepting_a_payload_the_check_expects_refused_is_an_alter() {
+        let stub = stub::start(vec![("/ingest", vec![Reply::json(200, "{}")])]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let mut case = case_yaml("");
+        case.expect.ingest = "rejected".to_string();
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Alter);
+    }
+
+    /// `accepted-or-rejected` passes on a refusal, because the store told the
+    /// caller. The divergence such a check looks for is 200 then absence.
+    #[test]
+    fn accepted_or_rejected_passes_when_the_store_refuses() {
+        let stub = stub::start(vec![(
+            "/ingest",
+            vec![Reply::json(400, r#"{"error":"timestamp too old"}"#)],
+        )]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(400, ""));
+        let mut case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        case.expect.ingest = "accepted-or-rejected".to_string();
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Pass);
+        assert!(result.detail.contains("timestamp too old"), "{}", result.detail);
+    }
+
+    /// A store that answers 200 and names what it dropped is doing something
+    /// different from one that says nothing, and the row must show it.
+    #[test]
+    fn a_reported_rejection_is_carried_into_the_detail() {
+        let stub = stub::start(vec![
+            (
+                "/ingest",
+                vec![Reply::json(
+                    200,
+                    r#"{"partialSuccess":{"rejectedLogRecords":"1","errorMessage":"too old, discarded"}}"#,
+                )],
+            ),
+            ("/search", vec![Reply::json(200, r#"{"hits":[]}"#)]),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Alter);
+        assert!(result.detail.contains("1 rejected record"), "{}", result.detail);
+        assert!(result.detail.contains("too old, discarded"), "{}", result.detail);
+    }
+
+    /// teardown was declared in the adapter schema from 0.1 and never sent, so
+    /// a rerun read whatever the last run left behind. It must run first.
+    #[test]
+    fn teardown_runs_before_ingest() {
+        let stub = stub::start(vec![
+            ("/reset", vec![Reply::json(200, "{}")]),
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            ("/search", vec![Reply::json(200, r#"{"hits":[]}"#)]),
+        ]);
+        let adapter: Backend = serde_yaml::from_str(
+            r#"
+name: stub
+teardown:
+  request: DELETE /reset
+protocols:
+  otlp-logs:
+    formats: [otlp-json]
+    ingest:
+      request: POST /ingest
+"#,
+        )
+        .unwrap();
+        let runner = Runner::new(adapter, stub.url.clone(), false).unwrap();
+        let case = case_yaml("");
+        runner.run_case("otlp-logs", &case).expect("no harness error");
+        let paths = stub.paths();
+        let reset = paths.iter().position(|p| p.contains("/reset")).expect("teardown sent");
+        let ingest = paths.iter().position(|p| p.contains("/ingest")).expect("ingest sent");
+        assert!(reset < ingest, "teardown must precede ingest, got {paths:?}");
+    }
+
+    /// A store that will not create an index on write has to be given one, and
+    /// a setup that fails is not a verdict about the backend.
+    #[test]
+    fn a_failed_setup_is_not_applicable_rather_than_a_verdict() {
+        let stub = stub::start(vec![
+            ("/create", vec![Reply::json(500, r#"{"error":"cannot create"}"#)]),
+            ("/ingest", vec![Reply::json(200, "{}")]),
+        ]);
+        let adapter: Backend = serde_yaml::from_str(
+            r#"
+name: stub
+setup:
+  request: POST /create
+protocols:
+  otlp-logs:
+    formats: [otlp-json]
+    ingest:
+      request: POST /ingest
+"#,
+        )
+        .unwrap();
+        let runner = Runner::new(adapter, stub.url.clone(), false).unwrap();
+        let result = runner.run_case("otlp-logs", &case_yaml("")).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::NotApplicable);
+        assert!(result.detail.contains("setup failed"), "{}", result.detail);
+        assert!(!stub.paths().iter().any(|p| p.contains("/ingest")), "must not ingest");
+    }
+
+    /// When the control does not pass, no other row says anything about the
+    /// backend, and printing one fact five times helps nobody.
+    #[test]
+    fn a_failing_control_marks_the_rest_of_the_suite_not_applicable() {
+        let stub = stub::start(vec![(
+            "/ingest",
+            vec![Reply::json(400, r#"{"error":"refused"}"#)],
+        )]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(400, ""));
+        let mut control = case_yaml("");
+        control.control = true;
+        control.id = "otlp-logs/control".to_string();
+        let mut other = case_yaml("");
+        other.id = "otlp-logs/other".to_string();
+
+        let outcome = runner.run_suite("otlp-logs", &[control, other]);
+        let control_row = outcome.results.iter().find(|r| r.id.ends_with("control")).unwrap();
+        let other_row = outcome.results.iter().find(|r| r.id.ends_with("other")).unwrap();
+        assert_eq!(control_row.verdict, Verdict::Reject);
+        assert_eq!(other_row.verdict, Verdict::NotApplicable);
+        assert!(other_row.detail.contains("control rejected"), "{}", other_row.detail);
+        // N/A is never counted with the verdicts.
+        assert_eq!(outcome.count(Verdict::NotApplicable), 1);
+        assert_eq!(outcome.count(Verdict::Pass), 0);
+    }
+
+    /// A harness failure is N/A, never a verdict: the backend has not been
+    /// asked anything.
+    #[test]
+    fn a_network_failure_is_not_applicable_not_a_verdict() {
+        let adapter: Backend = serde_yaml::from_str(
+            r#"
+name: stub
+protocols:
+  otlp-logs:
+    formats: [otlp-json]
+    ingest:
+      request: POST /ingest
+"#,
+        )
+        .unwrap();
+        // Port 1 is closed; nothing is listening.
+        let runner = Runner::new(adapter, "http://127.0.0.1:1".into(), false).unwrap();
+        let outcome = runner.run_suite("otlp-logs", &[case_yaml("")]);
+        assert_eq!(outcome.results[0].verdict, Verdict::NotApplicable);
+        assert!(outcome.results[0].detail.starts_with("harness error"), "{}", outcome.results[0].detail);
+    }
+
+    /// A query check compares which rows come back, not one record's fields.
+    #[test]
+    fn a_query_check_reports_the_rows_that_differ() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            (
+                "/query",
+                vec![Reply::json(
+                    200,
+                    r#"{"hits":{"hits":[{"_source":{"doc":"a"}},{"_source":{"doc":"unexpected-row"}}]}}"#,
+                )],
+            ),
+        ]);
+        let adapter: Backend = serde_yaml::from_str(
+            r#"
+name: stub
+protocols:
+  es-bulk:
+    formats: [es-ndjson]
+    ingest:
+      request: POST /ingest
+    query:
+      request: POST /query
+      records: /hits/hits
+      marker_pointer: /_source
+      poll:
+        interval_ms: 10
+        timeout_ms: 60
+"#,
+        )
+        .unwrap();
+        let runner = Runner::new(adapter, stub.url.clone(), false).unwrap();
+        let mut case: Case = serde_yaml::from_str(
+            r#"
+id: es-bulk/stub
+protocol: es-bulk
+title: stub query case
+send:
+  format: es-ndjson
+  body: cases/es-bulk/absent-field.ndjson
+expect:
+  ingest: accepted
+  query:
+    body: cases/es-bulk/match-all-run.query.json
+    returns: [a]
+"#,
+        )
+        .unwrap();
+        case.dir = std::path::PathBuf::from("cases/es-bulk");
+        let result = runner.run_case("es-bulk", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Alter);
+        assert!(result.detail.contains("unexpected: unexpected-row"), "{}", result.detail);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
