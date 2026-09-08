@@ -1,0 +1,7 @@
+{
+  "query": {
+    "bool": {
+      "filter": [ { "term": { "{{ run_key_field }}": "{{ run_key }}" } } ]
+    }
+  }
+}

@@ -1,0 +1,34 @@
+id: es-bulk/exists-absent-field
+protocol: es-bulk
+title: An exists query returns only documents carrying a non-null value
+
+rule:
+  basis: de-facto
+  spec: elasticsearch/query-dsl
+  section: exists
+  text: >
+    An exists query returns documents in which the field is present and
+    non-null. Elasticsearch is the reference for this protocol, so its answer
+    defines conformance: a field written as null is not indexed and the
+    document is excluded, exactly as one that omitted the field is. A backend
+    that returns nothing at all because field-presence indexing is disabled has
+    answered a question about its own configuration rather than about the data,
+    and the caller is not told.
+  observed:
+    - https://github.com/quickwit-oss/quickwit/issues/6475
+
+send:
+  format: es-ndjson
+  body: cases/es-bulk/absent-field.ndjson
+
+expect:
+  ingest: accepted
+  query:
+    body: cases/es-bulk/exists-absent-field.query.json
+    returns: [with-field-match, with-field-other]
+
+notes: >
+  Copied from Elasticsearch 8.15.0 on 2026-09-08:
+  [with-field-match, with-field-other]. Both the absent and the null document
+  are excluded, which is the answer that makes null and absent equivalent here
+  while must_not treats them the same as each other but opposite to this.

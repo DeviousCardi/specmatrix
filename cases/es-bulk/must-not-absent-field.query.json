@@ -1,0 +1,8 @@
+{
+  "query": {
+    "bool": {
+      "filter": [ { "term": { "{{ run_key_field }}": "{{ run_key }}" } } ],
+      "must_not": [ { "term": { "status": 500 } } ]
+    }
+  }
+}

@@ -1,0 +1,87 @@
+# Adapter for Elasticsearch.
+#
+# The reference column for the `es-bulk` protocol. There is no Elasticsearch
+# specification, so under docs/DESIGN.md's adjudication order this
+# implementation *is* the definition: where another backend disagrees with this
+# column on an es-bulk check, the other backend is non-conformant. That
+# asymmetry is a property of the method and is stated plainly in the published
+# matrix rather than hidden.
+#
+# Confirmed by hand against 8.15.0 on 2026-09-08. Everything below came from a
+# response; nothing from documentation. Three things were not what they looked
+# like:
+#
+#   - a bulk action line with no `_index` and no index in the URL is refused
+#     with action_request_validation_exception, so the index goes in the path
+#   - `?refresh=true` on the bulk call makes the write visible to the next
+#     search. Without it the runner's poll measures the refresh interval rather
+#     than the backend, and every store looks like it drops data
+#   - a document field written as "specmatrix.run" is nested by Elasticsearch
+#     into specmatrix -> run and dynamically mapped as `text` with a `.keyword`
+#     subfield. A term query on `specmatrix.run` matches nothing, because the
+#     analyzed form of a run key like sm-2ec76f6afab11dd3 is not a single term.
+#     The filter therefore targets `specmatrix.run.keyword`, confirmed to
+#     return exactly one hit. That behaviour is worth a case of its own; see
+#     cases/es-bulk/text-vs-keyword-term.yaml.
+#
+# The disk watermark setting below is an accommodation to the machine, not to
+# the corpus. Elasticsearch refuses to allocate a shard past its flood-stage
+# watermark, and on a host with a full disk every check fails with
+# unavailable_shards_exception — a fact about the laptop, not the backend. It
+# changes no behaviour any check asserts on.
+
+name: elasticsearch
+# Confirmed: a term query on `specmatrix.run` matches nothing, because the
+# analyzed form of a run key is not a single term. Cases write
+# `{{ run_key_field }}` so the query they carry stays portable.
+run_key_field: specmatrix.run.keyword
+version_from:
+  request: GET /
+  field: /version/number
+
+container:
+  image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+  port: 9200
+  env:
+    discovery.type: single-node
+    xpack.security.enabled: "false"
+    ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    cluster.routing.allocation.disk.threshold_enabled: "false"
+  ready:
+    request: GET /_cluster/health
+    expect_status: 200
+
+auth:
+  kind: none
+
+protocols:
+  es-bulk:
+    formats: [es-ndjson]
+    ingest:
+      request: POST /{{ suite_stream }}/_bulk?refresh=true
+      headers:
+        Content-Type: application/x-ndjson
+    readback:
+      request: POST /{{ suite_stream }}/_search
+      body:
+        query:
+          term:
+            specmatrix.run.keyword: "{{ run_key }}"
+      records: /hits/hits
+      # Renames only. Each pointer holds the value that was sent.
+      fields:
+        message: /_source/message
+        level: /_source/level
+      poll:
+        interval_ms: 500
+        timeout_ms: 15000
+    query:
+      request: POST /{{ suite_stream }}/_search
+      records: /hits/hits
+      marker_pointer: /_source
+      poll:
+        interval_ms: 500
+        timeout_ms: 15000
+
+teardown:
+  request: DELETE /{{ suite_stream }}

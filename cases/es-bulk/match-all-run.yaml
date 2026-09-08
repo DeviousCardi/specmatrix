@@ -1,0 +1,28 @@
+id: es-bulk/match-all-run
+protocol: es-bulk
+title: Every document written by this run is returned
+control: true
+
+rule:
+  basis: de-facto
+  spec: elasticsearch/query-dsl
+  section: bool.filter
+  text: >
+    A control for the query suite, not a divergence. Every other query check
+    asserts on a subset of this dataset, so when this does not return all four
+    documents the dataset did not land, the run-key filter does not select it,
+    or the marker cannot be read — and no other row says anything about the
+    backend's query semantics.
+
+send:
+  format: es-ndjson
+  body: cases/es-bulk/absent-field.ndjson
+
+expect:
+  ingest: accepted
+  query:
+    body: cases/es-bulk/match-all-run.query.json
+    returns: [with-field-match, with-field-other, field-absent, field-null]
+
+notes: >
+  Elasticsearch 8.15.0, observed 2026-09-08: all four documents.

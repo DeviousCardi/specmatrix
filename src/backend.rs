@@ -17,6 +17,12 @@ pub struct Backend {
     pub container: serde_json::Value,
     pub auth: Option<Auth>,
     pub protocols: HashMap<String, Protocol>,
+    /// How this backend names the run-key field in a query. A case writes
+    /// `{{ run_key_field }}` so the query it carries stays portable: which
+    /// column or subfield holds the key is the adapter's business, and baking
+    /// one backend's spelling into a shared case would make the case a test of
+    /// that backend's mapping.
+    pub run_key_field: Option<String>,
     #[serde(default)]
     pub normalise: Normalise,
     pub teardown: Option<Request>,
@@ -45,6 +51,23 @@ pub struct Protocol {
     pub formats: Vec<String>,
     pub ingest: Request,
     pub readback: Option<Readback>,
+    /// Where a query-semantics check sends its query and where the rows come
+    /// back. Separate from `readback` because it asks a different question and
+    /// a backend may answer it at a different endpoint.
+    pub query: Option<Query>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Query {
+    #[serde(flatten)]
+    pub request: Request,
+    /// JSON pointer to the array of rows in the response.
+    #[serde(default)]
+    pub records: String,
+    /// JSON pointer, within one row, to the object holding the marker field.
+    pub marker_pointer: String,
+    #[serde(default)]
+    pub poll: Poll,
 }
 
 #[derive(Debug, Deserialize, Clone)]
