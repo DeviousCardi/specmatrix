@@ -1,0 +1,25 @@
+SpecMatrix
+Copyright 2026 The SpecMatrix Authors
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+---
+
+This product includes payload fixtures under cases/ that are deliberately
+malformed — invalid UTF-8, embedded NUL bytes, and values at the edges of their
+types. They are test data, they are never executed, and each is described by the
+check file beside it.
+
+Product and company names referenced in cases/, backends/ and results/ are the
+property of their respective owners. Their appearance records what a specific
+version of a specific product did with a specific payload on a specific date,
+and is not a claim about the product in general.

@@ -75,9 +75,10 @@ static `matrix.html` under `results/<date>/<suite>/`.
 | Path | Contents |
 | --- | --- |
 | `cases/` | The corpus. One file per check, each citing the rule it tests. |
-| `src/` | The runner. Sends cases, reads back, compares, decides verdicts. |
 | `backends/` | Per-backend adapters: endpoints, auth, read-back queries. |
-| `docs/` | Design, the backend roster, and how to add to either. |
+| `src/` | The runner. Sends cases, reads back, compares, decides verdicts. |
+| `tools/` | The corpus gate CI runs. |
+| [`AGENTS.md`](AGENTS.md) | The design, and how to add a check or a backend. |
 
 The corpus is the asset. The runner is plumbing and could be rewritten in a
 weekend; a corpus of checks that each trace to a line of a specification takes
@@ -87,8 +88,7 @@ much longer to build and is what makes the results worth citing.
 
 Not yet published. Two protocols, six backends and twenty-three checks run
 unattended from one command; the write-up and the upstream filings that have to
-precede it are not done, and `docs/ROADMAP.md` is explicit that a framework with
-no findings gets read once and forgotten.
+precede it are not done.
 
 There are findings. Among them: one store accepts a record with an int64 body,
 discards it, and reports `rejected_log_records: 0`; one replaces invalid UTF-8
@@ -101,8 +101,56 @@ Every one of those is unfiled, and `CONTRIBUTING.md` requires filing before
 publishing: a maintainer should learn about a finding from their own tracker,
 not from a comparison table.
 
-See [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/BACKENDS.md`](docs/BACKENDS.md)
-for how the checks and the roster are decided.
+[`AGENTS.md`](AGENTS.md) has the design and the rules a change has to satisfy.
+[`CONTRIBUTING.md`](CONTRIBUTING.md) has what a pull request needs.
+
+## Running it
+
+Rust and Docker; nothing else.
+
+```sh
+cargo test                        # 122 tests, no network, no containers
+
+cargo run -- up   --backend loki  # start a backend from its adapter
+cargo run -- run  --backend loki --suite otlp-logs
+cargo run -- down --backend loki
+
+# every column, starting and stopping each container itself
+cargo run -- matrix --suite otlp-logs --manage \
+  --backends parseable,openobserve,quickwit,victorialogs,loki
+```
+
+`matrix` writes `matrix.json`, `matrix.md` and a static `matrix.html` under
+`results/<date>/<suite>/`. The JSON is the artefact; the page is rendered from
+it and says so.
+
+**It writes to whatever you point it at**, sends deliberately malformed payloads,
+and deletes the stream or index each case uses before running it. Point it at a
+store you are willing to have written to, and read
+[`SECURITY.md`](SECURITY.md) first.
+
+## Backends
+
+| Backend | OTLP logs | Elasticsearch `_bulk` |
+| --- | --- | --- |
+| Parseable | ✓ | |
+| OpenObserve | ✓ | ingest only — no query API |
+| Quickwit | ✓ protobuf only | ✓ |
+| VictoriaLogs | ✓ protobuf only | |
+| Grafana Loki | ✓ | |
+| Elasticsearch | | ✓ *(reference)* |
+
+Elasticsearch is the reference for its own protocol, so it cannot fail it. That
+asymmetry is a property of the method, not a result.
+
+## Contributing
+
+Two kinds of contribution matter most: a check that cites a real rule, and a
+backend adapter someone will keep running. Start with
+[`AGENTS.md`](AGENTS.md), then [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+Every check must cite a clause, an observed divergence, or a filed bug. Checks
+invented to pad the matrix make it look thorough and make it worthless.
 
 ## Neutrality
 
@@ -118,4 +166,8 @@ become one.
 
 ## Licence
 
-Apache-2.0.
+Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+
+Product names in `cases/`, `backends/` and `results/` belong to their owners.
+Their appearance records what one version of one product did with one payload on
+one date, and is not a claim about the product in general.

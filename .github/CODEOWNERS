@@ -1,0 +1,11 @@
+# Every pull request needs a review from an owner listed here. Combined with the
+# branch ruleset on main, this is what stops anything reaching the published
+# corpus without a second pair of eyes.
+*                   @DeviousCardi
+
+# The parts where a mistake becomes a published claim about someone else's
+# software. Kept as separate lines so a future maintainer can be added to one
+# without being added to all.
+/cases/             @DeviousCardi
+/backends/          @DeviousCardi
+/docs/findings/     @DeviousCardi

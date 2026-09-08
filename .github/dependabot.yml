@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Actions are pinned to commit SHAs, which means they never update by
+  # themselves — including when one is patched for a security problem. This is
+  # what keeps a pin from quietly becoming a stale pin.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

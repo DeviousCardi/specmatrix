@@ -1,0 +1,41 @@
+name: matrix
+
+# The full suites against real containers. Slow and Docker-bound, so this runs
+# on a schedule and on demand rather than on every pull request.
+#
+# A matrix without a date is a claim about the past that reads as a claim about
+# the present. The quarterly run is what keeps a published page honest.
+on:
+  workflow_dispatch:
+  schedule:
+    # First day of each quarter.
+    - cron: "0 6 1 1,4,7,10 *"
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [otlp-logs, es-bulk]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: run the suite against every column
+        run: |
+          case "${{ matrix.suite }}" in
+            otlp-logs) BACKENDS=parseable,openobserve,quickwit,victorialogs,loki ;;
+            es-bulk)   BACKENDS=elasticsearch,quickwit,openobserve ;;
+            *) echo "unknown suite"; exit 1 ;;
+          esac
+          cargo run --release -- matrix --suite "${{ matrix.suite }}" --manage --backends "$BACKENDS"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: matrix-${{ matrix.suite }}
+          path: results/
+          if-no-files-found: error

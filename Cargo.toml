@@ -2,8 +2,17 @@
 name = "specmatrix"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.74"
 description = "Compatibility testing for observability backends"
 license = "Apache-2.0"
+repository = "https://github.com/DeviousCardi/specmatrix"
+homepage = "https://github.com/DeviousCardi/specmatrix"
+readme = "README.md"
+keywords = ["observability", "conformance", "opentelemetry", "prometheus", "testing"]
+categories = ["command-line-utilities", "development-tools::testing"]
+# The corpus and the adapters are the asset; a published crate that shipped
+# only the binary would be missing the part that matters.
+include = ["src/**", "cases/**", "backends/**", "README.md", "LICENSE", "NOTICE"]
 
 [dependencies]
 anyhow = "1"
