@@ -31,6 +31,7 @@ auth:
 
 protocols:
   otlp-logs:
+    formats: [otlp-json]
     ingest:
       request: POST /v1/logs
       headers:
@@ -62,6 +63,7 @@ protocols:
         spanId: /span_id
 
   otlp-metrics:
+    formats: [otlp-json]
     ingest:
       request: POST /v1/metrics
       headers:

@@ -1,6 +1,7 @@
 id: otlp-logs/minimal-record
 protocol: otlp-logs
 title: An ordinary log record survives the round trip
+control: true
 
 rule:
   basis: spec

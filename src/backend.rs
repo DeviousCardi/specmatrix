@@ -39,6 +39,10 @@ pub struct Auth {
 
 #[derive(Debug, Deserialize)]
 pub struct Protocol {
+    /// Wire formats this backend accepts for the protocol. Empty means the
+    /// adapter has not declared any, and every case is attempted.
+    #[serde(default)]
+    pub formats: Vec<String>,
     pub ingest: Request,
     pub readback: Option<Readback>,
 }

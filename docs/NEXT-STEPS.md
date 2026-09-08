@@ -3,8 +3,11 @@
 Follow in order. Each step ends with a check that must pass before the next
 step starts. If a check fails, stop and fix it; do not skip ahead.
 
-State at the start: the runner builds, `cargo test` passes, three OTLP-logs
-checks pass against Parseable v2.9.4, and nothing is committed.
+Steps 1 to 5 are done and committed. Step 6 as originally written could not be
+completed: Quickwit 0.8.2 refuses OTLP JSON at the `Content-Type` header, and
+the runner had no way to say "not eligible" rather than "REJECT". The record is
+in `docs/ROADMAP.md` under `## 0.1 result`. Steps 6 onward are rewritten to fix
+that and reach the 0.1 exit criterion with a backend that does speak JSON.
 
 ---
 
@@ -231,67 +234,103 @@ Claude-Session: https://claude.ai/code/session_01URoG3r23WhxGPjnotL4tdU"
 
 ---
 
-## Step 6 — Start Quickwit and confirm the endpoints by hand
+## Step 6 — Encoding belongs to the case; eligibility belongs to the adapter
 
-Do not write the adapter from documentation. The Parseable adapter was wrong
-about `severity_text` until a real record was inspected. Do the inspection
-first.
+The suite name `otlp-logs` hides the encoding. Every case already carries
+`send.format: otlp-json`; the adapter needs to say which formats it accepts,
+and the runner needs a fourth outcome for "cannot be asked".
 
-```sh
-docker run -d --name specmatrix-quickwit -p 7280:7280 \
-  -e QW_ENABLE_OTLP_ENDPOINT=true \
-  quickwit/quickwit:0.8.2 run
+### 6a. Adapter
+
+Add a `formats` list to each protocol in `backends/parseable.yaml`:
+
+```yaml
+protocols:
+  otlp-logs:
+    formats: [otlp-json]
+    ingest:
+      ...
 ```
 
-Wait for it, then confirm each of the following and write down what you see:
+In `src/backend.rs`, add `#[serde(default)] pub formats: Vec<String>` to
+`Protocol`. An empty list means "not declared" and is treated as accepting
+everything, so existing adapters keep working until they are filled in.
 
-```sh
-# 1. Version. Note the exact JSON path the version string sits at.
-curl -s http://localhost:7280/api/v1/version
+### 6b. Runner
 
-# 2. The OTLP logs index exists. Expect otel-logs-v0_7 in the list.
-curl -s http://localhost:7280/api/v1/indexes | python3 -m json.tool | grep index_id
+Add `Verdict::NotApplicable`, printed as `N/A`. In `run_case`, before reading
+the payload:
 
-# 3. Ingest one record by hand, with a fixed run key.
-sed 's/{{ run_key }}/manual-check/' cases/otlp-logs/minimal-record.json \
-  | curl -s -X POST http://localhost:7280/api/v1/otlp/v1/logs \
-      -H 'Content-Type: application/json' --data-binary @-
-
-# 4. Wait a few seconds, then search for it. Quickwit commits on a timer.
-sleep 5
-curl -s -X POST http://localhost:7280/api/v1/otel-logs-v0_7/search \
-  -H 'Content-Type: application/json' \
-  -d '{"query": "attributes.specmatrix.run:manual-check"}' | python3 -m json.tool
+```rust
+if !protocol.formats.is_empty() && !protocol.formats.contains(&case.send.format) {
+    return Ok(self.result(case, Verdict::NotApplicable,
+        format!("encoding {} not accepted by this backend", case.send.format)));
+}
 ```
 
-If step 4 returns zero hits, try the query `"*"` with no filter and inspect
-how the attribute is actually stored, then adjust the query until the record
-comes back by its run key. Do not proceed until it does.
+The summary line gets a separate count: `5 checks, 0 pass, 0 reject, 0 alter,
+5 n/a`. `N/A` is not a verdict about the backend and must never be added into
+pass or fail totals.
 
-From the hit, write down the JSON pointer to each of: the body string, the
-severity text, the timestamp, and the attributes. The expected layout is
-`/body/message`, `/severity_text`, `/timestamp_nanos`, `/attributes`, but use
-what the response shows, not this list.
+### 6c. Test
 
-**Check:** a search by run key returns exactly one hit, and you have the four
-pointers written down.
+Unit test: a protocol declaring `[otlp-protobuf]` and a case sending
+`otlp-json` yields `NotApplicable` without any request being made.
+
+**Check:** `cargo test` passes and Parseable still shows the five results
+recorded in the roadmap.
 
 ---
 
-## Step 7 — Write the Quickwit adapter
+## Step 7 — The control rule gets a third outcome
 
-`backends/quickwit.yaml`, filling in the values confirmed in Step 6:
+Today a failing `minimal-record` is read as "adapter is wrong". Quickwit showed
+it can also mean "backend cannot take this traffic at all". The runner should
+distinguish them and stop the suite rather than print five copies of one fact.
+
+### 7a. Case
+
+Add `control: true` to `cases/otlp-logs/minimal-record.yaml`, and
+`#[serde(default)] pub control: bool` to `Case`.
+
+### 7b. Runner
+
+In `run_suite`, run control cases first. Then:
+
+| Control outcome | Meaning | Action for remaining cases |
+| --- | --- | --- |
+| `PASS` | Adapter and backend both work | Run them |
+| `REJECT` | Backend refused an ordinary record | Mark all `N/A`, detail `control rejected: <status and first line>` |
+| `ALTER` | Backend took the record, adapter cannot read it back correctly | Mark all `N/A`, detail `control altered: adapter mapping is wrong, fix it before trusting any row` |
+| `N/A` | Encoding not accepted | Mark all `N/A` with the same detail |
+| harness error | Runner or network problem | Stop with the error |
+
+Only the control row shows the real verdict. The rest say `N/A` and why.
+
+**Check:** point the runner at a port with nothing listening. Output is one
+harness error, not five. Then run against Parseable and the five results are
+unchanged.
+
+---
+
+## Step 8 — Record Quickwit as a column that cannot be asked
+
+Write `backends/quickwit.yaml` with what was confirmed by hand, and nothing
+that was not:
 
 ```yaml
 # Adapter for Quickwit.
 #
-# Endpoints and field paths confirmed by hand against quickwit 0.8.2 on
-# <date>. Re-confirm when bumping the image.
+# Confirmed against quickwit 0.8.2 on <date>: the OTLP endpoint accepts
+# application/x-protobuf only. JSON is refused at the Content-Type header
+# before the body is read. The OTLP specification makes JSON a SHOULD, so this
+# is a deviation from a recommendation, not a conformance failure. Read-back
+# is deliberately absent until the runner can send protobuf (see 0.2).
 
 name: quickwit
 version_from:
   request: GET /api/v1/version
-  field: <pointer from step 6.1, e.g. /build/version>
+  field: <pointer confirmed by hand>
 
 container:
   image: quickwit/quickwit:0.8.2
@@ -308,94 +347,227 @@ auth:
 
 protocols:
   otlp-logs:
+    formats: [otlp-protobuf]
     ingest:
       request: POST /api/v1/otlp/v1/logs
       headers:
-        Content-Type: application/json
-    readback:
-      request: POST /api/v1/otel-logs-v0_7/search
-      body:
-        query: "attributes.specmatrix.run:{{ run_key }}"
-      records: /hits
-      poll:
-        interval_ms: 1000
-        timeout_ms: 30000
-      fields:
-        body: <pointer from step 6, e.g. /body/message>
-        severityText: <pointer, e.g. /severity_text>
-        severityNumber: /severity_number
-        timeUnixNano: <pointer, e.g. /timestamp_nanos>
-        traceId: /trace_id
-        spanId: /span_id
-
-normalise:
-  drop_fields: []
+        Content-Type: application/x-protobuf
 ```
 
-Quickwit indexes on a commit timer, so the poll timeout is longer than
-Parseable's. If the runner needs `auth.kind: none` handled and does not, add
-it in `authenticate` in `src/runner.rs`.
+Run it:
 
-**Check:** `cargo run -- run --backend quickwit --suite otlp-logs --url http://localhost:7280`
-runs without a runner error.
+```sh
+cargo run -- run --backend quickwit --suite otlp-logs --url http://localhost:7280
+```
 
----
+**Check:** five `N/A` rows, each saying the encoding is not accepted, and a
+summary of `5 n/a`. No request was sent. This is the first time the report
+says one fact once.
 
-## Step 8 — Read the Quickwit results with the control rule
-
-Read the table in this order and nothing else:
-
-1. **`minimal-record` first.** If it is not `PASS`, the adapter is wrong. Fix
-   the adapter and rerun. Do not read the other rows until it passes.
-2. **`schema-url-omitted`.** Any verdict here is now about Quickwit.
-3. **`empty-batch`.** Same.
-4. **`body-invalid-utf8`.** Same. Compare with the Parseable verdict.
-5. **`timestamp-nanosecond-precision`.** Compare the stored value with
-   Parseable's. If they differ in precision, you have a divergence between two
-   implementations, which is a permitted reason for the check to become
-   `exact`. Do not promote it yet; note it.
-
-Record every verdict verbatim in each case's `notes:` field with the Quickwit
-version.
-
-**Check:** `minimal-record` is `PASS` on both backends.
-
----
-
-## Step 9 — Decide whether 0.1 is done
-
-0.1 is done when a check that should fail does fail against a backend whose
-adapter was not tuned around it. Answer these in writing, in
-`docs/ROADMAP.md` under a new heading `## 0.1 result`:
-
-- Which checks differ between Parseable and Quickwit, and how.
-- Whether any difference was hidden or created by the adapter's field mapping.
-  If a value had to be rewritten for a check to pass, that is a divergence
-  and the mapping must be reverted.
-- Whether the round trip can be made fair. This is the stop condition in the
-  roadmap; answer it honestly.
-
-Then commit:
+Commit:
 
 ```sh
 git add -A
-git commit -m "Quickwit adapter and 0.1 result
+git commit -m "Encoding eligibility, control outcomes, and a Quickwit column marked N/A
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01URoG3r23WhxGPjnotL4tdU"
 ```
 
-**Check:** two backends, five checks, all verdicts recorded, `0.1 result`
-written.
+---
+
+## Step 9 — Second column: OpenObserve
+
+OpenObserve accepts OTLP/HTTP JSON and stores it, so it can reach the 0.1
+exit criterion without protobuf. Confirm every endpoint by hand before writing
+the adapter, exactly as Step 6 originally required.
+
+### 9a. Start it
+
+```sh
+docker run -d --name specmatrix-openobserve -p 5080:5080 \
+  -e ZO_ROOT_USER_EMAIL=admin@specmatrix.local \
+  -e ZO_ROOT_USER_PASSWORD=specmatrix \
+  openobserve/openobserve:latest
+```
+
+Pull `latest` once, read the version in 9b, then pin that exact tag in the
+adapter. Never leave `latest` in a committed adapter.
+
+### 9b. Confirm by hand
+
+Write down every response. Do not go from documentation.
+
+```sh
+AUTH='admin@specmatrix.local:specmatrix'
+
+# 1. Version. Note the JSON path.
+curl -s -u "$AUTH" http://localhost:5080/api/config | python3 -m json.tool | grep -i version
+
+# 2. Ingest one record with a fixed run key. Org is `default`; the stream
+#    name goes in a header.
+sed 's/{{ run_key }}/manual-check/' cases/otlp-logs/minimal-record.json \
+  | curl -s -u "$AUTH" -X POST http://localhost:5080/api/default/v1/logs \
+      -H 'Content-Type: application/json' -H 'stream-name: specmatrixotlplogs' \
+      --data-binary @-
+
+# 3. Wait, then search by run key. Times are microseconds since epoch.
+sleep 5
+NOW=$(date +%s%6N); START=$((NOW - 3600000000))
+curl -s -u "$AUTH" -X POST http://localhost:5080/api/default/_search \
+  -H 'Content-Type: application/json' \
+  -d "{\"query\":{\"sql\":\"SELECT * FROM \\\"specmatrixotlplogs\\\" WHERE specmatrix_run = 'manual-check'\",\"start_time\":$START,\"end_time\":$NOW}}" \
+  | python3 -m json.tool
+```
+
+If step 3 returns no hits, search with no `WHERE` clause and look at how the
+attribute was actually stored. OpenObserve flattens attribute keys and usually
+turns `.` into `_`, but confirm it from the record, then adjust the query until
+exactly one hit comes back by run key. Do not proceed until it does.
+
+From the hit, write down the pointer to: the body, the severity text, the
+timestamp, and the run-key attribute.
+
+**Check:** one hit by run key, four pointers written down, version and its
+JSON path written down.
+
+### 9c. Runner: microsecond window variables
+
+The Parseable adapter uses `window_start` and `window_end` as RFC 3339
+strings. OpenObserve wants microseconds. In `vars_for` in `src/runner.rs`, add
+`window_start_us` and `window_end_us` alongside the existing ones. No other
+runner change should be needed; if one is, write down what and why in the
+commit message.
+
+### 9d. Adapter
+
+`backends/openobserve.yaml`, filled from 9b:
+
+```yaml
+# Adapter for OpenObserve.
+#
+# Confirmed by hand against openobserve <version> on <date>. Re-confirm when
+# bumping the image.
+
+name: openobserve
+version_from:
+  request: GET /api/config
+  field: <pointer from 9b.1>
+
+container:
+  image: openobserve/openobserve:<pinned tag>
+  port: 5080
+  env:
+    ZO_ROOT_USER_EMAIL: admin@specmatrix.local
+    ZO_ROOT_USER_PASSWORD: specmatrix
+  ready:
+    request: GET /healthz
+    expect_status: 200
+
+auth:
+  kind: basic
+  username: admin@specmatrix.local
+  password: specmatrix
+
+protocols:
+  otlp-logs:
+    formats: [otlp-json]
+    ingest:
+      request: POST /api/default/v1/logs
+      headers:
+        Content-Type: application/json
+        stream-name: "{{ suite_stream }}"
+    readback:
+      request: POST /api/default/_search
+      body:
+        query:
+          sql: "SELECT * FROM \"{{ suite_stream }}\" WHERE <run-key column from 9b> = '{{ run_key }}'"
+          start_time: "{{ window_start_us }}"
+          end_time: "{{ window_end_us }}"
+      records: /hits
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000
+      fields:
+        body: <pointer from 9b>
+        severityText: <pointer from 9b>
+        severityNumber: <pointer from 9b>
+        timeUnixNano: <pointer from 9b>
+
+normalise:
+  drop_fields:
+    - _timestamp
+```
+
+If `start_time` and `end_time` must be JSON numbers rather than strings, the
+template substitution will produce a quoted string. In that case, change the
+render step in `read_back` to try parsing a rendered `"{{ ... }}"` value as a
+number before falling back to a string. Write a unit test for it.
+
+### 9e. Run and read with the control rule
+
+```sh
+cargo run -- run --backend openobserve --suite otlp-logs --url http://localhost:5080
+```
+
+Read `minimal-record` first. If it is `REJECT`, the backend cannot take the
+record and the adapter is not at fault; inspect the response. If it is
+`ALTER`, the field mapping is wrong; go back to 9b. Only when it is `PASS` do
+the other four rows say anything about OpenObserve.
+
+Record every verdict verbatim in each case's `notes:` field with the
+OpenObserve version.
+
+**Check:** `minimal-record` is `PASS`, five rows have verdicts, all recorded.
+
+---
+
+## Step 10 — Rewrite the 0.1 result
+
+Replace the `### Status` block of `## 0.1 result` in `docs/ROADMAP.md`. Answer:
+
+- Which checks differ between Parseable and OpenObserve, and how. The likely
+  candidates are `body-invalid-utf8`, which Parseable rejects, and
+  `timestamp-nanosecond-precision`, where Parseable keeps milliseconds.
+- Whether any verdict was hidden or created by a field mapping.
+- Whether the 0.1 exit criterion is met: a check produced a verdict other than
+  `PASS` against a backend whose adapter was not tuned around it. If both
+  backends agree on all five, say so plainly; that is a result too.
+- Whether the round trip can be made fair across two stores with different
+  storage models. This is the stop condition and gets a direct answer.
+
+Commit:
+
+```sh
+git add -A
+git commit -m "OpenObserve adapter and 0.1 result
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01URoG3r23WhxGPjnotL4tdU"
+```
+
+**Check:** two stores with verdicts, one store marked `N/A` with a reason,
+`0.1 result` updated, working tree clean.
+
+---
+
+## Deferred to 0.2, and why
+
+- **Protobuf encoding of OTLP.** Needed to give Quickwit real verdicts and
+  needed anyway for remote-write in 0.3. Cases stay as JSON files; the runner
+  decodes OTLP JSON into the generated types and re-encodes as protobuf. The
+  invalid-UTF-8 case stays JSON-only and shows `N/A` on protobuf backends,
+  which is correct: a protobuf string field cannot carry those bytes.
+- **Promoting `timestamp-nanosecond-precision` to `exact`.** Only once two
+  implementations disagree on precision. Step 10 will say whether they do.
 
 ---
 
 ## What not to do during these steps
 
-- Do not add a third backend.
+- Do not add a fourth backend.
 - Do not add container orchestration, teardown, or version recording to the
-  runner. They matter for a published matrix, not for finding out whether the
-  idea works.
+  runner.
 - Do not add a check that does not cite a rule, a divergence, or a bug.
 - Do not change a field mapping to make a check pass. Change it only when a
   hand inspection shows the value is intact under a different name.
@@ -406,5 +578,5 @@ written.
 ## Teardown when finished
 
 ```sh
-docker rm -f specmatrix-parseable specmatrix-quickwit
+docker rm -f specmatrix-parseable specmatrix-quickwit specmatrix-openobserve
 ```

@@ -10,6 +10,11 @@ pub struct Case {
     pub id: String,
     pub protocol: String,
     pub title: String,
+    /// A control establishes that the adapter and backend can carry an
+    /// ordinary record. When it does not pass, no other row in the suite says
+    /// anything about the backend.
+    #[serde(default)]
+    pub control: bool,
     #[serde(default)]
     pub rule: serde_json::Value,
     pub send: Send,
