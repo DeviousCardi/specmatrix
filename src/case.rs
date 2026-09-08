@@ -49,7 +49,44 @@ pub struct ReadbackExpect {
     #[serde(rename = "match")]
     pub match_: String,
     #[serde(default)]
-    pub on: Vec<String>,
+    pub on: Vec<FieldSpec>,
+    /// Which series a check asserts on, by name. Protocols that send several
+    /// series in one request need it; a check usually asserts on one of them.
+    pub series: Option<String>,
+}
+
+/// A field a check asserts on, optionally with how to read it.
+///
+/// `on: [body]` compares the JSON values as they stand. `on: [{field:
+/// timeUnixNano, as: timestamp}]` compares them as instants and reports the
+/// precision each store kept, which is what makes two backends that returned
+/// the same moment in different shapes comparable in one table.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum FieldSpec {
+    Name(String),
+    Typed {
+        field: String,
+        #[serde(rename = "as")]
+        as_kind: String,
+    },
+}
+
+impl FieldSpec {
+    pub fn field(&self) -> &str {
+        match self {
+            FieldSpec::Name(name) => name,
+            FieldSpec::Typed { field, .. } => field,
+        }
+    }
+
+    /// The declared `as` value, if the check gave one.
+    pub fn kind_name(&self) -> Option<&str> {
+        match self {
+            FieldSpec::Name(_) => None,
+            FieldSpec::Typed { as_kind, .. } => Some(as_kind),
+        }
+    }
 }
 
 impl Case {

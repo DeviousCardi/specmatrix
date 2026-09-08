@@ -21,7 +21,9 @@ expect:
   ingest: accepted
   readback:
     match: present
-    on: [timeUnixNano]
+    on:
+      - field: timeUnixNano
+        as: timestamp
 
 notes: >
   Observed on Parseable v2.9.4: sent "1755000000123456789", read back
@@ -37,3 +39,19 @@ notes: >
   roadmap set for promoting this check to `exact`, but promotion needs a rule
   saying what a store must preserve, and the specification does not give one.
   Recorded, not adjudicated.
+
+  Since 0.2 the field is read `as: timestamp`, so the result line names the type
+  and the precision each store kept rather than printing two values that cannot
+  be compared by eye. Confirmed 2026-09-08 with a generated instant:
+
+    Parseable v2.9.4    sent "…123456789" (string, nanoseconds),
+                        read back "2026-09-08T09:27:28.123" (string, milliseconds)
+    OpenObserve v0.92.2 sent "…123456789" (string, nanoseconds),
+                        read back 1788859648123456 (number, microseconds)
+
+  Were this promoted to `exact`, both would fail: a typed comparison holds two
+  instants equal only when they name the same nanosecond, so a store that
+  dropped digits cannot pass by having both sides rounded to its own precision.
+  That is the property that keeps the kind from becoming normalisation, and it
+  is why promotion is still a question about the specification rather than
+  about the runner.

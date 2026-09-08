@@ -193,20 +193,36 @@ impl Runner {
                 let rendered = template::render_bytes(&std::fs::read(&payload_path)?, &vars);
                 let (sent, sent_was_lossy) = parse_sent(&rendered);
 
-                let observed: Vec<String> = expect
-                    .on
+                // Every field the check names, read once, with the kind it
+                // declared. Reading a value is not rewriting it: the kind
+                // decides how two stored values are compared and what the
+                // result line says, never what the backend stored.
+                let mut readings = Vec::new();
+                for spec in &expect.on {
+                    let kind = match spec.kind_name() {
+                        Some(name) => crate::compare::kind_from_str(name)
+                            .with_context(|| format!("case {} field {}", case.id, spec.field()))?,
+                        None => crate::compare::Kind::Raw,
+                    };
+                    let field = spec.field();
+                    readings.push((
+                        field.to_string(),
+                        kind,
+                        logical_field_for(&case.protocol, &sent, field),
+                        self.field_of(readback, &record, field),
+                    ));
+                }
+
+                let observed: Vec<String> = readings
                     .iter()
-                    .map(|field| {
-                        let want = crate::otlp::logical_field(&sent, field);
-                        let got = self.field_of(readback, &record, field);
-                        (field, want, got)
+                    .filter(|(_, kind, want, got)| {
+                        expect.match_ != "exact" || !crate::compare::equal(want, got, *kind)
                     })
-                    .filter(|(_, want, got)| expect.match_ != "exact" || want != got)
-                    .map(|(field, want, got)| {
+                    .map(|(field, kind, want, got)| {
                         format!(
                             "{field}: sent {}, read back {}",
-                            render_opt(&want),
-                            render_opt(&got)
+                            crate::compare::describe(want, *kind),
+                            crate::compare::describe(got, *kind)
                         )
                     })
                     .collect();
@@ -216,19 +232,16 @@ impl Runner {
                 // decode, so "equal" only means the backend replaced the same
                 // bytes we did. Report the substitution rather than a match.
                 if sent_was_lossy && expect.match_ == "exact" {
-                    let replaced: Vec<String> = expect
-                        .on
+                    let replaced: Vec<String> = readings
                         .iter()
-                        .map(|field| {
-                            let want = crate::otlp::logical_field(&sent, field);
-                            let got = self.field_of(readback, &record, field);
-                            if want == got {
+                        .map(|(field, kind, want, got)| {
+                            if crate::compare::equal(want, got, *kind) {
                                 format!("{field}: invalid bytes replaced with U+FFFD")
                             } else {
                                 format!(
                                     "{field}: sent {}, read back {}",
-                                    render_opt(&want),
-                                    render_opt(&got)
+                                    crate::compare::describe(want, *kind),
+                                    crate::compare::describe(got, *kind)
                                 )
                             }
                         })
@@ -397,6 +410,19 @@ impl Runner {
     }
 }
 
+/// A check names its fields in the protocol's own vocabulary, so which reader
+/// applies is a property of the protocol and not of the backend. New protocols
+/// add an arm here rather than a special case anywhere else.
+fn logical_field_for(
+    protocol: &str,
+    sent: &serde_json::Value,
+    field: &str,
+) -> Option<serde_json::Value> {
+    match protocol {
+        _ => crate::otlp::logical_field(sent, field),
+    }
+}
+
 /// Decides a case at ingest, or returns `None` to carry on to read-back.
 ///
 /// `accepted-or-rejected` exists for checks where either answer at the door is
@@ -495,13 +521,6 @@ fn parse_sent(bytes: &[u8]) -> (serde_json::Value, bool) {
             let value = serde_json::from_str(&lossy).unwrap_or(serde_json::Value::Null);
             (value, true)
         }
-    }
-}
-
-fn render_opt(value: &Option<serde_json::Value>) -> String {
-    match value {
-        Some(v) => v.to_string(),
-        None => "<absent>".to_string(),
     }
 }
 
