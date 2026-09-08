@@ -5,7 +5,7 @@
 //! refuses a payload tells you so; one that alters it does not.
 
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
@@ -13,7 +13,7 @@ use crate::backend::{Auth, Backend, Readback, Request};
 use crate::case::Case;
 use crate::template::{self, Vars};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Verdict {
     /// Written and read back unchanged.
@@ -28,7 +28,7 @@ pub enum Verdict {
     NotApplicable,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CheckResult {
     pub id: String,
     pub title: String,
@@ -37,7 +37,7 @@ pub struct CheckResult {
     pub detail: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Outcome {
     pub backend: String,
     pub backend_version: Option<String>,
@@ -211,13 +211,22 @@ impl Runner {
         if let Some(setup) = self.backend.setup.as_ref() {
             let response = self.send_declared(setup, &vars)?;
             if !(200..300).contains(&response.status) && response.status != 400 {
-                // 400 is tolerated because several stores answer it for "already
-                // exists", which is not a failure to set up.
+                // 400 is tolerated because several stores answer it for
+                // "already exists", which is not a failure to set up.
                 return Ok(self.result(
                     case,
                     Verdict::NotApplicable,
                     format!("setup failed: {} {}", response.status, first_line(&response.text())),
                 ));
+            }
+            if let Some(verify) = self.backend.setup_verify.as_ref() {
+                if !self.wait_until_ready(verify, &vars)? {
+                    return Ok(self.result(
+                        case,
+                        Verdict::NotApplicable,
+                        "setup did not take effect within the adapter's timeout".to_string(),
+                    ));
+                }
             }
         }
 
@@ -444,6 +453,25 @@ impl Runner {
             eprintln!("<-- {status} {}", first_line(&out.text()));
         }
         Ok(out)
+    }
+
+    /// Polls a precondition until the store answers 2xx.
+    ///
+    /// Returns false if it never does, which is a reason not to measure rather
+    /// than a verdict: the case was never put to the backend.
+    fn wait_until_ready(&self, verify: &crate::backend::Verify, vars: &Vars) -> Result<bool> {
+        let deadline = Instant::now() + Duration::from_millis(verify.poll.timeout_ms);
+        loop {
+            if let Ok(response) = self.send_declared(&verify.request, vars) {
+                if (200..300).contains(&response.status) {
+                    return Ok(true);
+                }
+            }
+            if Instant::now() >= deadline {
+                return Ok(false);
+            }
+            std::thread::sleep(Duration::from_millis(verify.poll.interval_ms));
+        }
     }
 
     /// Runs a query check's body and returns the marker of every row that came
@@ -1060,6 +1088,77 @@ protocols:
         let reset = paths.iter().position(|p| p.contains("/reset")).expect("teardown sent");
         let ingest = paths.iter().position(|p| p.contains("/ingest")).expect("ingest sent");
         assert!(reset < ingest, "teardown must precede ingest, got {paths:?}");
+    }
+
+    /// A setup that reports success but has not taken effect is the race that
+    /// made a correct Quickwit adapter report a rejected control: teardown had
+    /// not finished deleting, so the create answered "already exists" and the
+    /// write landed on an index about to vanish.
+    #[test]
+    fn a_setup_that_has_not_taken_effect_is_not_applicable() {
+        let stub = stub::start(vec![
+            ("/create", vec![Reply::json(400, r#"{"error":"already exists"}"#)]),
+            ("/exists", vec![Reply::json(404, r#"{"error":"index not found"}"#)]),
+            ("/ingest", vec![Reply::json(200, "{}")]),
+        ]);
+        let adapter: Backend = serde_yaml::from_str(
+            r#"
+name: stub
+setup:
+  request: POST /create
+setup_verify:
+  request: GET /exists
+  poll:
+    interval_ms: 10
+    timeout_ms: 120
+protocols:
+  otlp-logs:
+    formats: [otlp-json]
+    ingest:
+      request: POST /ingest
+"#,
+        )
+        .unwrap();
+        let runner = Runner::new(adapter, stub.url.clone(), false).unwrap();
+        let result = runner.run_case("otlp-logs", &case_yaml("")).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::NotApplicable);
+        assert!(result.detail.contains("did not take effect"), "{}", result.detail);
+        assert!(!stub.paths().iter().any(|p| p.contains("/ingest")), "must not ingest");
+    }
+
+    /// Once the precondition holds, the case is measured normally.
+    #[test]
+    fn a_setup_that_takes_effect_lets_the_case_run() {
+        let stub = stub::start(vec![
+            ("/create", vec![Reply::json(400, r#"{"error":"already exists"}"#)]),
+            (
+                "/exists",
+                vec![Reply::json(404, "{}"), Reply::json(404, "{}"), Reply::json(200, "{}")],
+            ),
+            ("/ingest", vec![Reply::json(200, "{}")]),
+        ]);
+        let adapter: Backend = serde_yaml::from_str(
+            r#"
+name: stub
+setup:
+  request: POST /create
+setup_verify:
+  request: GET /exists
+  poll:
+    interval_ms: 10
+    timeout_ms: 120
+protocols:
+  otlp-logs:
+    formats: [otlp-json]
+    ingest:
+      request: POST /ingest
+"#,
+        )
+        .unwrap();
+        let runner = Runner::new(adapter, stub.url.clone(), false).unwrap();
+        let result = runner.run_case("otlp-logs", &case_yaml("")).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Pass, "detail: {}", result.detail);
+        assert!(stub.paths().iter().any(|p| p.contains("/ingest")), "must ingest once ready");
     }
 
     /// A store that will not create an index on write has to be given one, and

@@ -45,6 +45,13 @@ pub struct Backend {
     /// will not create an index on write and must be given one; the shape of
     /// that index is part of the adapter, not of the corpus.
     pub setup: Option<Request>,
+    /// A request that must answer 2xx before a case is measured, polled after
+    /// setup. Tolerating a 400 from setup is not enough on its own: a teardown
+    /// that has not finished deleting makes the store answer "already exists"
+    /// to the create that follows, and the write then lands on an index that
+    /// is about to disappear. Verifying the precondition holds is the
+    /// difference between measuring the backend and measuring a race.
+    pub setup_verify: Option<Verify>,
     pub teardown: Option<Request>,
 }
 
@@ -97,6 +104,14 @@ pub struct Protocol {
     /// back. Separate from `readback` because it asks a different question and
     /// a backend may answer it at a different endpoint.
     pub query: Option<Query>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Verify {
+    #[serde(flatten)]
+    pub request: Request,
+    #[serde(default)]
+    pub poll: Poll,
 }
 
 #[derive(Debug, Deserialize)]
