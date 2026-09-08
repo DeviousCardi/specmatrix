@@ -160,22 +160,16 @@ impl Runner {
 
         let (status, response) = self.send(&protocol.ingest, &vars, body)?;
         let accepted = (200..300).contains(&status);
-        let expects_rejection = case.expect.ingest == "rejected";
 
-        if !accepted {
-            let detail = format!("{status} {}", first_line(&response));
-            return Ok(self.result(
-                case,
-                if expects_rejection { Verdict::Pass } else { Verdict::Reject },
-                detail,
-            ));
-        }
-        if expects_rejection {
-            return Ok(self.result(
-                case,
-                Verdict::Alter,
-                "accepted a payload the check expects to be refused".into(),
-            ));
+        if let Some(verdict) = ingest_verdict(&case.expect.ingest, accepted)
+            .with_context(|| format!("case {}", case.id))?
+        {
+            let detail = if accepted {
+                "accepted a payload the check expects to be refused".to_string()
+            } else {
+                format!("{status} {}", first_line(&response))
+            };
+            return Ok(self.result(case, verdict, detail));
         }
 
         let Some(expect) = case.expect.readback.as_ref() else {
@@ -403,6 +397,28 @@ impl Runner {
     }
 }
 
+/// Decides a case at ingest, or returns `None` to carry on to read-back.
+///
+/// `accepted-or-rejected` exists for checks where either answer at the door is
+/// conformant and the question is what happens afterwards. A store that refuses
+/// a record it will not keep has told the caller, which is a PASS; the failure
+/// such a check looks for is 200 followed by absence, and only read-back can
+/// see that.
+fn ingest_verdict(expected: &str, accepted: bool) -> Result<Option<Verdict>> {
+    Ok(match (expected, accepted) {
+        ("accepted", true) => None,
+        ("accepted", false) => Some(Verdict::Reject),
+        ("rejected", true) => Some(Verdict::Alter),
+        ("rejected", false) => Some(Verdict::Pass),
+        ("accepted-or-rejected", true) => None,
+        ("accepted-or-rejected", false) => Some(Verdict::Pass),
+        (other, _) => anyhow::bail!(
+            "declares expect.ingest: {other:?}; expected `accepted`, `rejected` \
+             or `accepted-or-rejected`"
+        ),
+    })
+}
+
 /// Time-derived template variables, as a free function so they can be tested
 /// without a Runner, a Backend or a network.
 ///
@@ -622,6 +638,51 @@ expect:
         assert_eq!(vars["now_ms"], now.timestamp_millis().to_string());
         assert_eq!(vars["now_us"], now.timestamp_micros().to_string());
         assert_eq!(vars["now_s"], now.timestamp().to_string());
+    }
+
+    /// A check that names an ingest expectation the runner does not know must
+    /// fail loudly. Silently treating it as "not rejected" would let a typo
+    /// publish a verdict.
+    #[test]
+    fn an_unknown_ingest_expectation_is_an_error() {
+        let err = ingest_verdict("accpeted", true).unwrap_err();
+        assert!(format!("{err}").contains("accpeted"), "{err}");
+    }
+
+    #[test]
+    fn an_accepted_write_the_check_expected_continues_to_read_back() {
+        assert_eq!(ingest_verdict("accepted", true).unwrap(), None);
+    }
+
+    #[test]
+    fn a_refused_write_the_check_expected_to_land_is_a_reject() {
+        assert_eq!(ingest_verdict("accepted", false).unwrap(), Some(Verdict::Reject));
+    }
+
+    #[test]
+    fn a_refused_write_the_check_expected_to_be_refused_passes() {
+        assert_eq!(ingest_verdict("rejected", false).unwrap(), Some(Verdict::Pass));
+    }
+
+    /// Accepting a payload a check expects to be refused is not a pass. It is
+    /// the store taking something it said it would not.
+    #[test]
+    fn accepting_a_payload_the_check_expects_refused_is_an_alter() {
+        assert_eq!(ingest_verdict("rejected", true).unwrap(), Some(Verdict::Alter));
+    }
+
+    /// Some checks are about what happens *after* a write, and either answer at
+    /// ingest is conformant. Refusing tells the caller, so it is a PASS; the
+    /// divergence such a check looks for is 200 followed by absence, which only
+    /// read-back can see.
+    #[test]
+    fn accepted_or_rejected_passes_on_a_refusal() {
+        assert_eq!(ingest_verdict("accepted-or-rejected", false).unwrap(), Some(Verdict::Pass));
+    }
+
+    #[test]
+    fn accepted_or_rejected_continues_to_read_back_on_acceptance() {
+        assert_eq!(ingest_verdict("accepted-or-rejected", true).unwrap(), None);
     }
 
     /// Deliberately outside a default ingest window, for the case that measures

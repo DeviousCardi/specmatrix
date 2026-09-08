@@ -1,0 +1,69 @@
+id: otlp-logs/timestamp-outside-ingest-window
+protocol: otlp-logs
+title: A record the store will not keep is refused, not silently dropped
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.0
+  section: otlphttp-response
+  text: >
+    On success the server MUST respond with HTTP 200. Where only part of a
+    batch is kept, OTLP defines a partial success channel rather than an error:
+    ExportLogsServiceResponse.partial_success carries rejected_log_records and
+    error_message, and a server that discards records MUST report them there.
+    The response body must also use the same encoding as the request, so a
+    JSON-encoded export is answered with a JSON-encoded response. A store whose
+    ingest window will not keep a record therefore has conformant answers
+    available: refuse it with a 4xx, or accept and report the rejection in a
+    partial_success the client can actually parse. What is not conformant is a
+    notice the client cannot read, whether that is an empty partial_success or
+    one encoded in a format the request did not use.
+  observed:
+    - docs/ROADMAP.md, 0.1 result, OpenObserve v0.92.2 at default settings
+
+send:
+  format: otlp-json
+  body: cases/otlp-logs/timestamp-outside-ingest-window.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: exact
+    on: [body]
+
+notes: >
+  Either verdict at ingest is conformant: REJECT tells the client, and a store
+  that keeps month-old data PASSes. What is not conformant is 200 followed by
+  absence with no notice the client can read.
+
+  Parseable v2.9.4: PASS, 200, round trip intact. It keeps a record dated
+  thirty days ago.
+
+  OpenObserve v0.92.2 at default settings: ALTER, "accepted (200) but never
+  became queryable". The verdict is correct and the reason is more specific
+  than the runner can currently see. Confirmed by hand on 2026-09-08:
+
+    HTTP/1.1 200 OK
+    content-type: application/json
+    content-length: 182
+
+  The body is not JSON. It is a protobuf-encoded ExportLogsServiceResponse
+  carrying partial_success.rejected_log_records = 1 and
+
+    error_message = "Too old data, only last 5 hours data can be ingested.
+    Data discarded. You can adjust ingestion max time by setting the
+    environment variable ZO_INGEST_ALLOWED_UPTO=<max_hours>"
+
+  So OpenObserve does report the discard through the channel OTLP defines for
+  it, and is not silently dropping data at the protocol level. The defect is
+  narrower and still real: the export was JSON, the response must therefore be
+  JSON, and the body is protobuf while the header announces
+  content-type: application/json. No conformant OTLP/JSON client can parse it,
+  so in practice the notice does not reach the caller and the record is gone
+  without a readable word about it.
+
+  The runner classifies on HTTP status alone and does not read
+  partial_success, so it cannot yet tell this apart from a store that says
+  nothing at all. That gap is recorded rather than papered over; a store that
+  reports a rejection the caller can read is doing something different from
+  one that does not, and the matrix should say so.
