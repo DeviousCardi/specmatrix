@@ -1,0 +1,37 @@
+id: remote-write/histogram-nan-count
+protocol: prometheus-remote-write
+title: A NaN histogram _count is a stale marker, not malformed input
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: stale-markers
+  text: >
+    Senders mark a series as stale by writing a sample whose value is NaN. Any
+    scrape target that disappears therefore produces NaN on its _count and
+    _bucket series. A receiver that treats NaN as malformed rejects ordinary,
+    conformant traffic.
+  observed:
+    - https://github.com/vectordotdev/vector/issues/26228
+
+send:
+  format: remote-write-protobuf
+  compression: snappy
+  body: cases/remote-write/histogram-nan-count.pb.json
+
+expect:
+  ingest: accepted
+  readback:
+    # The stale series itself is not expected to appear. What must survive is the
+    # unrelated series sent in the same write request: rejecting the batch over
+    # one stale marker loses data that has nothing to do with it.
+    match: present
+    series: unrelated_gauge
+    on: [value, labels]
+
+notes: >
+  This check has two failure modes and they are worth distinguishing in the
+  results. A 400 on the whole request is a REJECT and costs every sample batched
+  alongside the stale one. Accepting the request and emitting the histogram with
+  count 0 is an ALTER, and is worse: the value is fabricated, no error is raised,
+  and a dashboard renders it as a real measurement.

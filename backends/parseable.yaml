@@ -1,0 +1,82 @@
+# Adapter for Parseable.
+#
+# Endpoints and headers below were confirmed against parseable v2.9.4 running as
+# `parseable local-store`. Re-confirm when bumping the image: an adapter that
+# quietly stops exercising the real path turns a column into a false claim.
+
+name: parseable
+version_from:
+  # Parseable reports its version on the about endpoint; the runner records it
+  # alongside the results so a matrix is always attributable to a build.
+  request: GET /api/v1/about
+  field: version
+
+container:
+  image: quay.io/parseablehq/parseable:v2.9.4
+  command: ["parseable", "local-store"]
+  port: 8000
+  env:
+    P_USERNAME: admin
+    P_PASSWORD: admin
+    P_FS_DIR: /parseable/data
+    P_STAGING_DIR: /parseable/staging
+  ready:
+    request: GET /api/v1/liveness
+    expect_status: 200
+
+auth:
+  kind: basic
+  username: admin
+  password: admin
+
+protocols:
+  otlp-logs:
+    ingest:
+      request: POST /v1/logs
+      headers:
+        Content-Type: application/json
+        X-P-Stream: "{{ suite_stream }}"
+        X-P-Log-Source: otel-logs
+    readback:
+      request: POST /api/v1/query
+      body:
+        # Filter on the run key the runner stamps into every record, never on
+        # the time window alone: a window returns every record in the stream.
+        query: "SELECT * FROM {{ suite_stream }} WHERE \"specmatrix.run\" = '{{ run_key }}'"
+        startTime: "{{ window_start }}"
+        endTime: "{{ window_end }}"
+      # Parseable acknowledges before the record is queryable. Poll until it
+      # appears; absence after the timeout is the ALTER (accepted then dropped).
+      poll:
+        interval_ms: 500
+        timeout_ms: 15000
+      # Where Parseable keeps each OTLP field. These are renames only: the
+      # column holds the value that was sent. Anything that needed the value
+      # itself changed to match would be a divergence, not a mapping.
+      fields:
+        body: /body
+        severityText: /severity_text
+        severityNumber: /severity_number
+        timeUnixNano: /time_unix_nano
+        traceId: /trace_id
+        spanId: /span_id
+
+  otlp-metrics:
+    ingest:
+      request: POST /v1/metrics
+      headers:
+        Content-Type: application/json
+        X-P-Stream: "{{ suite_stream }}"
+        X-P-Log-Source: otel-metrics
+
+# Fields Parseable adds to every record. Listing them here excludes them from
+# comparison. Only additions belong in this list: if a value has to be rewritten
+# to make a check pass, that is a divergence being hidden, not normalised.
+normalise:
+  drop_fields:
+    - p_timestamp
+    - p_metadata
+    - p_tags
+
+teardown:
+  request: DELETE /api/v1/logstream/{{ suite_stream }}
