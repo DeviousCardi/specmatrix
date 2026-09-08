@@ -26,3 +26,5 @@ notes: >
   Reported against Parseable v2.9.4 and not reproducible on that version when
   checked by hand. Kept because the shape is what a conformant Collector sends,
   so it is worth asserting continuously rather than once.
+
+  Parseable v2.9.4: PASS. OpenObserve v0.92.2: PASS. Neither requires schemaUrl.

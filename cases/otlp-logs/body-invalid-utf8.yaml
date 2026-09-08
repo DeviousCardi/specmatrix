@@ -30,3 +30,6 @@ notes: >
   rule permits, so the verdict records what happens rather than reporting a
   fault: the caller is told, and no altered record is stored.
 
+  OpenObserve v0.92.2: REJECT. "400 Invalid json: invalid unicode code point
+  at line 1 column 345". Both stores refuse the payload rather than storing a
+  rewritten body, which is the behaviour the rule permits.
