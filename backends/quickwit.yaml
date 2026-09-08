@@ -28,6 +28,24 @@
 #     run key is stored at `/attributes/specmatrix.run` and queried as
 #     `attributes.specmatrix.run:<key>`, which returns exactly one hit
 
+# Confirmed 2026-09-08, and worth knowing before reading any Quickwit row: the
+# OTLP endpoint answers a protobuf export with a JSON body under
+# `content-type: application/json`.
+#
+#   $ curl -D - -X POST localhost:7280/api/v1/otlp/v1/logs \
+#       -H 'Content-Type: application/x-protobuf' --data-binary @minimal-record.pb
+#   HTTP/1.1 200 OK
+#   content-type: application/json
+#   { "partial_success": { ... } }
+#
+# OTLP requires the response to use the same encoding as the request, so a
+# conformant protobuf client cannot decode it. That is the mirror of what
+# OpenObserve v0.92.2 does in the other direction, and neither store is silent
+# about a discard so much as unreadable about one. The runner reports it on
+# every affected row rather than turning it into a verdict: no data is altered
+# by it, and stretching ALTER to cover a malformed response would blunt the one
+# verdict this project exists to make sharp.
+
 name: quickwit
 version_from:
   request: GET /api/v1/version

@@ -51,6 +51,20 @@ impl Outcome {
     }
 }
 
+/// One HTTP response, kept as bytes so a body can be read in whatever encoding
+/// the store actually used rather than the one it claimed.
+struct Response {
+    status: u16,
+    content_type: Option<String>,
+    body: Vec<u8>,
+}
+
+impl Response {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.body).into_owned()
+    }
+}
+
 pub struct Runner {
     backend: Backend,
     base_url: String,
@@ -175,7 +189,8 @@ impl Runner {
             }
         };
 
-        let (status, response) = self.send(&protocol.ingest, &vars, body)?;
+        let response = self.send(&protocol.ingest, &vars, body)?;
+        let status = response.status;
         let accepted = (200..300).contains(&status);
 
         if let Some(verdict) = ingest_verdict(&case.expect.ingest, accepted)
@@ -184,19 +199,30 @@ impl Runner {
             let detail = if accepted {
                 "accepted a payload the check expects to be refused".to_string()
             } else {
-                format!("{status} {}", first_line(&response))
+                format!("{status} {}", first_line(&response.text()))
             };
             return Ok(self.result(case, verdict, detail));
         }
 
+        // A 2xx does not mean the data was kept. OTLP gives a store a way to
+        // say it dropped part of a batch, and whether a store uses it is the
+        // difference between a loud failure and a silent one — which is the
+        // distinction this project exists to draw.
+        let reported = if case.protocol.starts_with("otlp") {
+            crate::otlp::export_report(&encoding, response.content_type.as_deref(), &response.body)
+        } else {
+            None
+        };
+        let reported = describe_report(reported.as_ref());
+
         let Some(expect) = case.expect.readback.as_ref() else {
-            return Ok(self.result(case, Verdict::Pass, format!("{status}, no read-back declared")));
+            return Ok(self.result(case, Verdict::Pass, format!("{status}, no read-back declared{reported}")));
         };
         let Some(readback) = protocol.readback.as_ref() else {
             return Ok(self.result(
                 case,
                 Verdict::Pass,
-                format!("{status}, adapter declares no read-back"),
+                format!("{status}, adapter declares no read-back{reported}"),
             ));
         };
 
@@ -204,7 +230,7 @@ impl Runner {
             None => Ok(self.result(
                 case,
                 Verdict::Alter,
-                format!("accepted ({status}) but never became queryable"),
+                format!("accepted ({status}) but never became queryable{reported}"),
             )),
             Some(record) => {
                 let (sent, sent_was_lossy) = parse_sent(&rendered);
@@ -267,7 +293,7 @@ impl Runner {
 
                 match expect.match_.as_str() {
                     "exact" if observed.is_empty() => {
-                        Ok(self.result(case, Verdict::Pass, format!("{status}, round trip intact")))
+                        Ok(self.result(case, Verdict::Pass, format!("{status}, round trip intact{reported}")))
                     }
                     "exact" => Ok(self.result(case, Verdict::Alter, observed.join("; "))),
                     // `present` is for values the project has not adjudicated.
@@ -310,7 +336,7 @@ impl Runner {
         vars
     }
 
-    fn send(&self, req: &Request, vars: &Vars, body: Vec<u8>) -> Result<(u16, String)> {
+    fn send(&self, req: &Request, vars: &Vars, body: Vec<u8>) -> Result<Response> {
         let (method, path) = req.parts()?;
         let url = format!("{}{}", self.base_url, template::render(&path, vars));
         let mut builder = match method.as_str() {
@@ -329,11 +355,20 @@ impl Runner {
         }
         let response = builder.body(body).send()?;
         let status = response.status().as_u16();
-        let text = response.text().unwrap_or_default();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        // Bytes, not text. A store may answer a JSON export with a protobuf
+        // body, and a lossy string conversion destroys it before it can be
+        // read — which is how that behaviour stayed invisible in 0.1.
+        let body = response.bytes().map(|b| b.to_vec()).unwrap_or_default();
+        let out = Response { status, content_type, body };
         if self.verbose {
-            eprintln!("<-- {status} {}", first_line(&text));
+            eprintln!("<-- {status} {}", first_line(&out.text()));
         }
-        Ok((status, text))
+        Ok(out)
     }
 
     /// Polls until the record appears or the adapter's timeout elapses.
@@ -410,11 +445,11 @@ impl Runner {
             return Ok(None);
         };
         let req = Request { request: vf.request.clone(), headers: Default::default(), body: None };
-        let (status, text) = self.send(&req, &Vars::new(), Vec::new())?;
-        if !(200..300).contains(&status) {
+        let response = self.send(&req, &Vars::new(), Vec::new())?;
+        if !(200..300).contains(&response.status) {
             return Ok(None);
         }
-        let value: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+        let value: serde_json::Value = serde_json::from_slice(&response.body).unwrap_or_default();
         // A version may sit at the top level or be nested. Accept both, as the
         // adapter's `field` is documented to allow either.
         let found = if vf.field.starts_with('/') {
@@ -424,6 +459,37 @@ impl Runner {
         };
         Ok(found.and_then(|v| v.as_str()).map(str::to_string))
     }
+}
+
+/// Renders what a store reported about a write it accepted, for appending to a
+/// result line. Empty when the store reported nothing, which is the ordinary
+/// case and should add no noise.
+///
+/// A store that answers 200 and names what it dropped has behaved better than
+/// one that answers 200 and says nothing, even though both lost the data. The
+/// verdict stays the same, because the record is gone either way and the caller
+/// who trusted the status is equally wrong; the detail says which of the two
+/// happened, so the matrix can show it.
+fn describe_report(report: Option<&crate::otlp::ExportReport>) -> String {
+    let Some(report) = report else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    if report.rejected > 0 {
+        let message = if report.message.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", first_line(&report.message))
+        };
+        parts.push(format!("store reported {} rejected record(s){message}", report.rejected));
+    }
+    if let Some(mismatch) = &report.encoding_mismatch {
+        parts.push(format!("{mismatch}, so no conformant client can read that report"));
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    format!("; {}", parts.join("; "))
 }
 
 /// A check names its fields in the protocol's own vocabulary, so which reader
