@@ -2,17 +2,17 @@
 //! read them back, and report what the backend did with them.
 
 mod backend;
+mod case;
 mod compare;
 mod docker;
 mod encode;
 mod es;
-mod case;
 mod matrix;
 mod otlp;
 mod query;
 mod report;
-mod stub;
 mod runner;
+mod stub;
 mod template;
 
 use anyhow::{Context, Result};
@@ -199,8 +199,7 @@ fn main() -> Result<()> {
             let dir = out.unwrap_or_else(|| {
                 PathBuf::from("results").join(now.format("%Y-%m-%d").to_string()).join(&suite)
             });
-            std::fs::create_dir_all(&dir)
-                .with_context(|| format!("creating {}", dir.display()))?;
+            std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
             std::fs::write(dir.join("matrix.json"), serde_json::to_string_pretty(&matrix)?)?;
             std::fs::write(dir.join("matrix.md"), matrix.to_markdown())?;
             let commit = std::process::Command::new("git")

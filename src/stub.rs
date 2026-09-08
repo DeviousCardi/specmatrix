@@ -33,6 +33,9 @@ impl Reply {
 
 #[derive(Debug, Clone)]
 pub struct Received {
+    /// Recorded so a test can assert which verb a request used; not every
+    /// test reads it.
+    #[allow(dead_code)]
     pub method: String,
     pub path: String,
     pub body: String,
@@ -107,7 +110,7 @@ pub fn start(routes: Vec<(&'static str, Vec<Reply>)>) -> Stub {
                 "HTTP/1.1 {} OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 reply.status,
                 reply.content_type,
-                body.as_bytes().len(),
+                body.len(),
                 body
             );
             let _ = stream.write_all(response.as_bytes());
@@ -125,22 +128,6 @@ fn find_run_key(body: &str) -> Option<String> {
     let rest = &body[start + 3..];
     let end = rest.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(rest.len());
     (end > 0).then(|| format!("sm-{}", &rest[..end]))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::find_run_key;
-
-    #[test]
-    fn a_run_key_is_found_in_a_payload() {
-        let body = r#"{"key":"specmatrix.run","value":{"stringValue":"sm-2ec76f6afab11dd3"}}"#;
-        assert_eq!(find_run_key(body), Some("sm-2ec76f6afab11dd3".to_string()));
-    }
-
-    #[test]
-    fn a_payload_without_one_yields_nothing() {
-        assert_eq!(find_run_key(r#"{"body":"no key here"}"#), None);
-    }
 }
 
 fn read_request(stream: &mut TcpStream) -> Option<Received> {
@@ -166,4 +153,20 @@ fn read_request(stream: &mut TcpStream) -> Option<Received> {
         reader.read_exact(&mut body).ok()?;
     }
     Some(Received { method, path, body: String::from_utf8_lossy(&body).into_owned() })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_run_key;
+
+    #[test]
+    fn a_run_key_is_found_in_a_payload() {
+        let body = r#"{"key":"specmatrix.run","value":{"stringValue":"sm-2ec76f6afab11dd3"}}"#;
+        assert_eq!(find_run_key(body), Some("sm-2ec76f6afab11dd3".to_string()));
+    }
+
+    #[test]
+    fn a_payload_without_one_yields_nothing() {
+        assert_eq!(find_run_key(r#"{"body":"no key here"}"#), None);
+    }
 }

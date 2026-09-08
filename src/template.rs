@@ -71,10 +71,7 @@ pub fn render_json(value: &serde_json::Value, vars: &Vars) -> serde_json::Value 
             Value::Array(items.iter().map(|item| render_json(item, vars)).collect())
         }
         Value::Object(fields) => Value::Object(
-            fields
-                .iter()
-                .map(|(key, val)| (key.clone(), render_json(val, vars)))
-                .collect(),
+            fields.iter().map(|(key, val)| (key.clone(), render_json(val, vars))).collect(),
         ),
         other => other.clone(),
     }
