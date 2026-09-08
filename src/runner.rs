@@ -142,21 +142,38 @@ impl Runner {
             .get(suite)
             .with_context(|| format!("adapter {} has no protocol {suite}", self.backend.name))?;
 
-        // A backend that does not speak this encoding is not failing the check,
-        // it is ineligible for it. Sending anyway would manufacture one
-        // rejection per case out of a single fact.
-        if !protocol.formats.is_empty() && !protocol.formats.contains(&case.send.format) {
+        // A backend that speaks no encoding this case can be sent in is not
+        // failing the check, it is ineligible for it. Sending anyway would
+        // manufacture one rejection per case out of a single fact, which is
+        // what 0.1 did to Quickwit. Eligibility is decided on what the case can
+        // be *converted* to, not only on the format its file happens to use.
+        let offered = case.send.encodings();
+        let Some(encoding) = crate::encode::choose_encoding(&protocol.formats, &offered) else {
             return Ok(self.result(
                 case,
                 Verdict::NotApplicable,
-                format!("encoding {} not accepted by this backend", case.send.format),
+                format!("encoding {} not accepted by this backend", offered.join(" or ")),
             ));
-        }
+        };
 
         let payload_path = case.payload_path();
         let raw = std::fs::read(&payload_path)
             .with_context(|| format!("reading payload {}", payload_path.display()))?;
-        let body = template::render_bytes(&raw, &vars);
+        let rendered = template::render_bytes(&raw, &vars);
+        // A payload that cannot be carried by the chosen encoding is another
+        // ineligibility, not a verdict: `body-invalid-utf8` cannot exist as a
+        // protobuf string, and reporting that as a failure would be a claim
+        // about the backend based on a limit of the wire format.
+        let body = match crate::encode::to_wire(&case.send.format, &encoding, &rendered) {
+            Ok(body) => body,
+            Err(e) => {
+                return Ok(self.result(
+                    case,
+                    Verdict::NotApplicable,
+                    format!("payload cannot be encoded as {encoding}: {e}"),
+                ))
+            }
+        };
 
         let (status, response) = self.send(&protocol.ingest, &vars, body)?;
         let accepted = (200..300).contains(&status);
@@ -190,7 +207,6 @@ impl Runner {
                 format!("accepted ({status}) but never became queryable"),
             )),
             Some(record) => {
-                let rendered = template::render_bytes(&std::fs::read(&payload_path)?, &vars);
                 let (sent, sent_was_lossy) = parse_sent(&rendered);
 
                 // Every field the check names, read once, with the kind it
