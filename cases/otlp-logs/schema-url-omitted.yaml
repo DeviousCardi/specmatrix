@@ -14,6 +14,7 @@ rule:
 
 send:
   format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
   body: cases/otlp-logs/schema-url-omitted.json
 
 expect:
@@ -28,3 +29,5 @@ notes: >
   so it is worth asserting continuously rather than once.
 
   Parseable v2.9.4: PASS. OpenObserve v0.92.2: PASS. Neither requires schemaUrl.
+
+  Quickwit 0.8.2: PASS. Three stores now, none of which requires schemaUrl.

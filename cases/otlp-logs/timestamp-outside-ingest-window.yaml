@@ -23,6 +23,7 @@ rule:
 
 send:
   format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
   body: cases/otlp-logs/timestamp-outside-ingest-window.json
 
 expect:
@@ -67,3 +68,6 @@ notes: >
   nothing at all. That gap is recorded rather than papered over; a store that
   reports a rejection the caller can read is doing something different from
   one that does not, and the matrix should say so.
+
+  Quickwit 0.8.2: PASS, round trip intact. It keeps a record dated thirty days
+  ago, so of the three stores only OpenObserve discards out-of-window data.

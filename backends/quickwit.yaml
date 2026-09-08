@@ -1,19 +1,32 @@
 # Adapter for Quickwit.
 #
-# Confirmed by hand against quickwit 0.8.2 on 2026-09-08: the OTLP endpoint
-# accepts application/x-protobuf only. JSON is refused at the Content-Type
-# header before the body is read:
+# Confirmed by hand against quickwit 0.8.2 on 2026-09-08, first for ingest and
+# then, in 0.2, for read-back. quickwit/quickwit:latest also resolved to 0.8.2
+# on that date; the tag below is pinned to what was actually tested.
+#
+# The OTLP endpoint accepts application/x-protobuf only. JSON is refused at the
+# Content-Type header before the body is read:
 #
 #   $ curl -X POST localhost:7280/api/v1/otlp/v1/logs \
 #       -H 'Content-Type: application/json' --data-binary @minimal-record.json
 #   {"message": "Invalid request header \"content-type\""}
 #
 # The OTLP specification makes JSON a SHOULD rather than a MUST, so this is a
-# deviation from a recommendation and not a conformance failure. Read-back is
-# deliberately absent until the runner can send protobuf; declaring a query it
-# has never exercised would be a guess committed as fact.
+# deviation from a recommendation and not a conformance failure. In 0.1 it made
+# this a column of five N/A; since 0.2 the runner encodes the corpus's OTLP JSON
+# as protobuf, so the cases that can cross that wire get real verdicts and only
+# body-invalid-utf8 remains N/A — a protobuf string field cannot carry those
+# bytes, which is a limit of the wire format rather than of Quickwit.
 #
-# quickwit/quickwit:latest also resolved to 0.8.2 on that date.
+# Read-back, all values below taken from a stored document rather than from
+# documentation:
+#
+#   - logs land in the index `otel-logs-v0_7`, created by Quickwit itself
+#   - hits are at the top-level `/hits`, not nested under a `hits` object
+#   - the body is at `/body/message`, not `/body`
+#   - attribute keys keep their dots and stay nested under `attributes`, so the
+#     run key is stored at `/attributes/specmatrix.run` and queried as
+#     `attributes.specmatrix.run:<key>`, which returns exactly one hit
 
 name: quickwit
 version_from:
@@ -40,3 +53,16 @@ protocols:
       request: POST /api/v1/otlp/v1/logs
       headers:
         Content-Type: application/x-protobuf
+    readback:
+      request: GET /api/v1/otel-logs-v0_7/search?query=attributes.specmatrix.run:{{ run_key }}&max_hits=10
+      records: /hits
+      # Renames only. Each pointer holds the value that was sent; nothing here
+      # rewrites one.
+      fields:
+        body: /body/message
+        severityText: /severity_text
+        severityNumber: /severity_number
+        timeUnixNano: /timestamp_nanos
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000

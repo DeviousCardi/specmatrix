@@ -25,6 +25,12 @@ expect:
     on: [body]
 
 notes: >
+  JSON-only by construction. A protobuf string field must be valid UTF-8, so
+  this payload cannot exist on that wire and the case declares no `encodings`.
+  A protobuf-only backend therefore reads N/A rather than passing a check it
+  was never sent, which is the honest answer: the limit is the wire format's,
+  not the backend's.
+
   Parseable v2.9.4: REJECT. "400 Could not deserialize into JSON object,
   invalid unicode code point at line 1 column 345". This is the behaviour the
   rule permits, so the verdict records what happens rather than reporting a
@@ -33,3 +39,7 @@ notes: >
   OpenObserve v0.92.2: REJECT. "400 Invalid json: invalid unicode code point
   at line 1 column 345". Both stores refuse the payload rather than storing a
   rewritten body, which is the behaviour the rule permits.
+
+  Quickwit 0.8.2: N/A. The case is JSON-only by construction and Quickwit's
+  OTLP endpoint accepts protobuf only, so it was never sent. That is the
+  honest answer rather than a pass or a failure.

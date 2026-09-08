@@ -15,6 +15,7 @@ rule:
 
 send:
   format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
   body: cases/otlp-logs/timestamp-nanosecond-precision.json
 
 expect:
@@ -55,3 +56,22 @@ notes: >
   That is the property that keeps the kind from becoming normalisation, and it
   is why promotion is still a question about the specification rather than
   about the runner.
+
+  Quickwit 0.8.2 makes a third answer, and it is the one that showed the report
+  needed to say more than the unit. Sent "...123456789", read back
+  1788859957123456000: a nanosecond field holding a whole number of
+  microseconds. Reported only by its unit this row would have read
+  "nanoseconds" and claimed Quickwit preserved them, so `describe` now names
+  the finest unit a value is a whole multiple of when that is coarser than the
+  unit itself.
+
+  Three stores, three behaviours, none of them nanoseconds:
+
+    Parseable v2.9.4    "2026-09-08T09:31:55.123"  string, milliseconds
+    OpenObserve v0.92.2 1788859915123456           number, microseconds
+    Quickwit 0.8.2      1788859957123456000        number, nanoseconds holding
+                                                   whole microseconds
+
+  Still recorded rather than adjudicated. Three implementations disagreeing is
+  not a rule about what a store must preserve, and the specification does not
+  give one.

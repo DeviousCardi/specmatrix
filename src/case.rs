@@ -28,11 +28,28 @@ pub struct Case {
 
 #[derive(Debug, Deserialize)]
 pub struct Send {
+    /// The encoding the payload file is written in.
     pub format: String,
+    /// Wire encodings this payload may be sent as, most preferred first. The
+    /// runner converts from `format` to whichever of these the backend accepts.
+    /// Empty means the payload may only be sent in the format it is written in,
+    /// which is correct for a payload whose exact bytes are the point.
+    #[serde(default)]
+    pub encodings: Vec<String>,
     /// Payload path, relative to the repository root. Sent byte-for-byte after
     /// `{{ run_key }}` substitution.
     pub body: PathBuf,
     pub compression: Option<String>,
+}
+
+impl Send {
+    pub fn encodings(&self) -> Vec<String> {
+        if self.encodings.is_empty() {
+            vec![self.format.clone()]
+        } else {
+            self.encodings.clone()
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

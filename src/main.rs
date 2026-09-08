@@ -3,6 +3,7 @@
 
 mod backend;
 mod compare;
+mod encode;
 mod case;
 mod otlp;
 mod report;

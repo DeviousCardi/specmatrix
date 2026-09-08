@@ -65,7 +65,32 @@ impl Precision {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Instant {
     pub nanos: i128,
+    /// The unit the value is expressed in, from its magnitude or its printed
+    /// digits.
     pub precision: Precision,
+}
+
+impl Instant {
+    /// The finest unit the value is a whole multiple of.
+    ///
+    /// A store can keep a nanosecond field and put a whole number of
+    /// microseconds in it, which Quickwit 0.8.2 does. Reporting only the unit
+    /// would say it preserved nanoseconds, and the matrix would carry a claim
+    /// that is not true. This is a heuristic — a genuine nanosecond instant
+    /// ending in three zeros reads as microseconds, one time in a thousand —
+    /// so it is reported beside the unit rather than in place of it, and the
+    /// corpus's own fixture ends in 123456789 so that it cannot mislead here.
+    pub fn resolution(self) -> Precision {
+        if self.nanos % 1_000_000_000 == 0 {
+            Precision::Seconds
+        } else if self.nanos % 1_000_000 == 0 {
+            Precision::Milliseconds
+        } else if self.nanos % 1_000 == 0 {
+            Precision::Microseconds
+        } else {
+            Precision::Nanoseconds
+        }
+    }
 }
 
 /// Reads an instant from whatever shape a store returned it in.
@@ -216,7 +241,17 @@ pub fn describe(value: &Option<Value>, kind: Kind) -> String {
     };
     match kind {
         Kind::Timestamp => match parse_instant(inner) {
-            Some(instant) => format!("{inner} ({json_type}, {})", instant.precision.name()),
+            Some(instant) => {
+                let unit = instant.precision.name();
+                let resolution = instant.resolution();
+                // Only worth saying when the value carries less than the unit
+                // it is expressed in; otherwise the two are the same fact.
+                if resolution == instant.precision {
+                    format!("{inner} ({json_type}, {unit})")
+                } else {
+                    format!("{inner} ({json_type}, {unit} holding whole {})", resolution.name())
+                }
+            }
             None => format!("{inner} ({json_type}, unreadable as an instant)"),
         },
         _ => format!("{inner} ({json_type})"),
@@ -357,6 +392,34 @@ mod tests {
         );
         assert_eq!(describe(&None, Kind::Timestamp), "<absent>");
         assert_eq!(describe(&Some(json!("INFO")), Kind::Raw), "\"INFO\" (string)");
+    }
+
+    /// Quickwit 0.8.2 stores a nanosecond field holding a whole number of
+    /// microseconds. Reporting only the unit would claim it preserved
+    /// nanoseconds, which is a false claim in a published matrix.
+    #[test]
+    fn a_value_carrying_less_than_its_unit_says_so() {
+        assert_eq!(
+            describe(&Some(json!(1_788_859_858_123_456_000i64)), Kind::Timestamp),
+            "1788859858123456000 (number, nanoseconds holding whole microseconds)"
+        );
+    }
+
+    #[test]
+    fn a_value_that_fills_its_unit_reports_the_unit_alone() {
+        assert_eq!(
+            describe(&Some(json!(1_788_859_858_123_456_789i64)), Kind::Timestamp),
+            "1788859858123456789 (number, nanoseconds)"
+        );
+    }
+
+    #[test]
+    fn resolution_finds_the_finest_unit_a_value_is_a_whole_multiple_of() {
+        let at = |n: i128| Instant { nanos: n, precision: Precision::Nanoseconds }.resolution();
+        assert_eq!(at(1_788_859_858_000_000_000), Precision::Seconds);
+        assert_eq!(at(1_788_859_858_123_000_000), Precision::Milliseconds);
+        assert_eq!(at(1_788_859_858_123_456_000), Precision::Microseconds);
+        assert_eq!(at(1_788_859_858_123_456_789), Precision::Nanoseconds);
     }
 
     #[test]

@@ -12,6 +12,7 @@ rule:
 
 send:
   format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
   body: cases/otlp-logs/empty-batch.json
 
 expect:
@@ -22,3 +23,20 @@ notes: >
   export is not treated as malformed.
 
   Parseable v2.9.4: PASS, 200. OpenObserve v0.92.2: PASS, 200.
+
+  Quickwit 0.8.2: REJECT, 500. Confirmed by hand on 2026-09-08 with a
+  zero-byte protobuf body, which is how an empty export encodes:
+
+    $ curl -X POST localhost:7280/api/v1/otlp/v1/logs \
+        -H 'Content-Type: application/x-protobuf' --data-binary ''
+    {"message": "error when ingesting payload: status: Internal, message:
+     \"\", details: [], metadata: MetadataMap { headers: {} }"}
+    HTTP 500
+
+  Parseable v2.9.4 and OpenObserve v0.92.2 both answer 200 to the same export.
+  This is the first divergence in this suite where one store refuses what the
+  other two accept, and the status makes it worse than a refusal: a 5xx tells a
+  Collector the failure is the server's and to retry, so a batching Collector
+  with nothing to send will retry an empty export indefinitely. The inner
+  message is empty, so there is nothing for an operator to act on either.
+  Report upstream.

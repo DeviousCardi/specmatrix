@@ -13,6 +13,7 @@ rule:
 
 send:
   format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
   body: cases/otlp-logs/minimal-record.json
 
 expect:
@@ -23,3 +24,7 @@ expect:
 
 notes: >
   Parseable v2.9.4: PASS, round trip intact. OpenObserve v0.92.2: PASS, round trip intact.
+
+  Quickwit 0.8.2: PASS, round trip intact, sent as OTLP protobuf. The control
+  passes on all three stores, so every other row in this suite says something
+  about the backend rather than about the adapter.
