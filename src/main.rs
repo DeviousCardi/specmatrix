@@ -2,6 +2,7 @@
 //! read them back, and report what the backend did with them.
 
 mod backend;
+mod compare;
 mod case;
 mod otlp;
 mod report;
