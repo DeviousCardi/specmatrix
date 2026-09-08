@@ -1,0 +1,205 @@
+//! Starting and stopping a backend from its adapter's `container:` block.
+//!
+//! Shelling out to the docker CLI rather than using a client library: the
+//! adapter already describes the container in the terms the CLI takes, and a
+//! maintainer reproducing a finding runs the same command by hand.
+
+use anyhow::{Context, Result};
+use std::process::Command;
+use std::time::{Duration, Instant};
+
+use crate::backend::Container;
+
+pub fn container_name(backend: &str) -> String {
+    format!("specmatrix-{backend}")
+}
+
+/// A committed adapter must pin its tag. A floating tag makes every result a
+/// claim about whatever the registry served that morning, and `docs/BACKENDS.md`
+/// is explicit that a matrix without versions reads as a claim about the present.
+pub fn check_pinned(container: &Container) -> Result<()> {
+    // Split the last path segment, not the whole reference: a registry with a
+    // port ("localhost:5000/foo") carries a colon and no tag at all.
+    let last = container.image.rsplit('/').next().unwrap_or("");
+    let tag = last.split_once(':').map(|(_, tag)| tag).unwrap_or("");
+    if tag.is_empty() || tag == "latest" {
+        anyhow::bail!(
+            "adapter image {} is not pinned; pin the exact tag you tested",
+            container.image
+        );
+    }
+    Ok(())
+}
+
+pub fn docker_run_args(backend: &str, container: &Container) -> Vec<String> {
+    let mut args = vec![
+        "run".to_string(),
+        "-d".to_string(),
+        "--name".to_string(),
+        container_name(backend),
+        "-p".to_string(),
+        format!("{0}:{0}", container.port),
+    ];
+    // Sorted, so two runs of one adapter produce the same command line and a
+    // difference in a log is a real difference.
+    let mut env: Vec<_> = container.env.iter().collect();
+    env.sort();
+    for (key, value) in env {
+        args.push("-e".to_string());
+        args.push(format!("{key}={value}"));
+    }
+    args.push(container.image.clone());
+    args.extend(container.command.iter().cloned());
+    args
+}
+
+/// Starts the container and blocks until its readiness probe passes.
+pub fn up(backend: &str, container: &Container) -> Result<String> {
+    check_pinned(container)?;
+    let _ = down(backend);
+    let output = Command::new("docker")
+        .args(docker_run_args(backend, container))
+        .output()
+        .context("running docker; is it installed and running?")?;
+    if !output.status.success() {
+        anyhow::bail!("docker run failed: {}", String::from_utf8_lossy(&output.stderr).trim());
+    }
+    let url = format!("http://localhost:{}", container.port);
+    if let Some(ready) = &container.ready {
+        wait_ready(&url, &ready.request, ready.expect_status)
+            .with_context(|| format!("waiting for {backend} to become ready"))?;
+    }
+    Ok(url)
+}
+
+fn wait_ready(base_url: &str, request: &str, expect_status: u16) -> Result<()> {
+    let (_, path) = request
+        .split_once(' ')
+        .with_context(|| format!("ready.request must be `METHOD /path`, got {request:?}"))?;
+    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(2)).build()?;
+    let deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        if let Ok(response) = client.get(format!("{base_url}{}", path.trim())).send() {
+            if response.status().as_u16() == expect_status {
+                return Ok(());
+            }
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!("{base_url}{} did not return {expect_status} within 180s", path.trim());
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+pub fn down(backend: &str) -> Result<()> {
+    Command::new("docker")
+        .args(["rm", "-f", &container_name(backend)])
+        .output()
+        .context("running docker rm")?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parseable() -> Container {
+        serde_yaml::from_str(
+            r#"
+image: quay.io/parseablehq/parseable:v2.9.4
+command: ["parseable", "local-store"]
+port: 8000
+env:
+  P_USERNAME: admin
+  P_PASSWORD: admin
+"#,
+        )
+        .expect("container block parses")
+    }
+
+    /// Named after the backend, so a rerun replaces the container rather than
+    /// colliding with one left behind.
+    #[test]
+    fn the_container_is_named_after_the_backend() {
+        let args = docker_run_args("parseable", &parseable());
+        let at = args.iter().position(|a| a == "--name").expect("--name present");
+        assert_eq!(args[at + 1], "specmatrix-parseable");
+    }
+
+    #[test]
+    fn the_port_is_published_on_the_same_number_inside_and_out() {
+        let args = docker_run_args("parseable", &parseable());
+        assert!(args.windows(2).any(|w| w[0] == "-p" && w[1] == "8000:8000"), "{args:?}");
+    }
+
+    /// Every declared variable must reach the container, or a backend starts
+    /// with different settings than the matrix claims it was tested under.
+    #[test]
+    fn every_declared_env_var_is_passed() {
+        let args = docker_run_args("parseable", &parseable());
+        let passed: Vec<&String> =
+            args.windows(2).filter(|w| w[0] == "-e").map(|w| &w[1]).collect();
+        assert_eq!(passed.len(), 2);
+        assert!(passed.iter().any(|v| v.as_str() == "P_USERNAME=admin"), "{passed:?}");
+        assert!(passed.iter().any(|v| v.as_str() == "P_PASSWORD=admin"), "{passed:?}");
+    }
+
+    /// Image then command, in that order, or docker reads the command as part
+    /// of the image reference.
+    #[test]
+    fn the_image_precedes_the_command() {
+        let args = docker_run_args("parseable", &parseable());
+        let image = args.iter().position(|a| a == "quay.io/parseablehq/parseable:v2.9.4");
+        let command = args.iter().position(|a| a == "local-store");
+        assert!(image < command, "{args:?}");
+    }
+
+    #[test]
+    fn an_unpinned_image_is_refused() {
+        let c: Container =
+            serde_yaml::from_str("image: openobserve/openobserve:latest\nport: 5080\n").unwrap();
+        assert!(format!("{}", check_pinned(&c).unwrap_err()).contains("latest"));
+    }
+
+    /// A reference with no tag at all is equally unpinned.
+    #[test]
+    fn an_untagged_image_is_refused() {
+        let c: Container = serde_yaml::from_str("image: grafana/loki\nport: 3100\n").unwrap();
+        assert!(check_pinned(&c).is_err());
+    }
+
+    /// A registry with a port carries a colon and no tag; splitting the whole
+    /// reference on the last colon would call that pinned.
+    #[test]
+    fn a_registry_port_is_not_mistaken_for_a_tag() {
+        let c: Container =
+            serde_yaml::from_str("image: localhost:5000/openobserve\nport: 5080\n").unwrap();
+        assert!(check_pinned(&c).is_err());
+    }
+
+    #[test]
+    fn a_pinned_image_is_accepted() {
+        let c: Container =
+            serde_yaml::from_str("image: openobserve/openobserve:v0.92.2\nport: 5080\n").unwrap();
+        assert!(check_pinned(&c).is_ok());
+    }
+
+    /// Every adapter in the repository must be startable and pinned.
+    #[test]
+    fn every_committed_adapter_is_pinned_and_startable() {
+        for entry in std::fs::read_dir("backends").expect("backends/ exists") {
+            let path = entry.unwrap().path();
+            if path.extension().map(|e| e != "yaml").unwrap_or(true) {
+                continue;
+            }
+            let adapter = crate::backend::Backend::load(&path)
+                .unwrap_or_else(|e| panic!("{} does not parse: {e:#}", path.display()));
+            let container = adapter
+                .container
+                .as_ref()
+                .unwrap_or_else(|| panic!("{} declares no container", path.display()));
+            check_pinned(container)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        }
+    }
+}

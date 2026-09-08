@@ -11,10 +11,10 @@ use std::path::Path;
 pub struct Backend {
     pub name: String,
     pub version_from: Option<VersionFrom>,
-    /// Container description. The runner does not start containers in 0.1;
-    /// it is kept in the adapter so the matrix can record what was tested.
-    #[serde(default)]
-    pub container: serde_json::Value,
+    /// How to start this backend. Typed rather than opaque since 0.2, because
+    /// `specmatrix up` reads it: a matrix that cannot be reproduced from the
+    /// repository is a claim rather than a result.
+    pub container: Option<Container>,
     pub auth: Option<Auth>,
     pub protocols: HashMap<String, Protocol>,
     /// How this backend names the run-key field in a query. A case writes
@@ -36,6 +36,23 @@ pub struct Backend {
     /// that index is part of the adapter, not of the corpus.
     pub setup: Option<Request>,
     pub teardown: Option<Request>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Container {
+    pub image: String,
+    #[serde(default)]
+    pub command: Vec<String>,
+    pub port: u16,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    pub ready: Option<Ready>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Ready {
+    pub request: String,
+    pub expect_status: u16,
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,7 +164,13 @@ impl Backend {
     }
 
     pub fn image(&self) -> Option<String> {
-        self.container.get("image").and_then(|v| v.as_str()).map(str::to_string)
+        self.container.as_ref().map(|c| c.image.clone())
+    }
+
+    /// Where this backend listens when started by `specmatrix up`, used when
+    /// `run` is given no --url.
+    pub fn default_url(&self) -> Option<String> {
+        self.container.as_ref().map(|c| format!("http://localhost:{}", c.port))
     }
 }
 
