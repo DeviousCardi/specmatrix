@@ -21,16 +21,27 @@ echo "required approving reviews: $REVIEWS"
 echo
 
 # --- the branch ruleset -------------------------------------------------------
-# `bypass_actors` is deliberately empty: with nothing listed, the rules apply to
-# administrators too. That is what "no one can push to main" means. Anyone who
-# can bypass a rule is someone the rule does not protect the repository from.
+# The admin role is listed with bypass_mode "pull_request", not "always". That
+# distinction is the whole design here:
+#
+#   * Direct pushes to main are refused for everyone, the owner included.
+#   * The owner can merge their own pull request without a second approver.
+#
+# Without it a sole maintainer cannot merge their own work at all, and the only
+# way out is to disable the ruleset — which is worse protection than a narrow,
+# deliberate exemption. A contributor still needs the owner's approval, because
+# nobody else has write access to merge with.
 echo "==> applying the ruleset on the default branch"
 jq -n --argjson reviews "$REVIEWS" '{
   name: "main is protected",
   target: "branch",
   enforcement: "active",
   conditions: { ref_name: { include: ["~DEFAULT_BRANCH"], exclude: [] } },
-  bypass_actors: [],
+  bypass_actors: [
+    # 5 is the repository admin role. "pull_request" scopes the exemption to
+    # merging a pull request; it does not permit a direct push.
+    { actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "pull_request" }
+  ],
   rules: [
     # No deleting the branch, and no force pushes. A force push to a published
     # branch rewrites history other people have already read.
