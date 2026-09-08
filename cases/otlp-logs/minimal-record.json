@@ -12,8 +12,8 @@
           "schemaUrl": "https://opentelemetry.io/schemas/1.21.0",
           "logRecords": [
             {
-              "timeUnixNano": "1755000000000000000",
-              "observedTimeUnixNano": "1755000000000000000",
+              "timeUnixNano": "{{ now_ns }}",
+              "observedTimeUnixNano": "{{ now_ns }}",
               "severityNumber": 9,
               "severityText": "INFO",
               "body": { "stringValue": "specmatrix minimal record" },
