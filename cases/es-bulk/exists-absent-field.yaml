@@ -43,3 +43,5 @@ notes: >
   correctly, so whatever the reported failure depends on, it is not that
   default alone on this version. The adapter deliberately leaves the setting at
   its default: turning it on would tune the backend until the check passed.
+
+  OpenObserve v0.92.2: N/A, no Elasticsearch query endpoint to ask.

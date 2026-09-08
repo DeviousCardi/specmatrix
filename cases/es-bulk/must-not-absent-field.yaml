@@ -47,3 +47,5 @@ notes: >
   been checked and is recorded as not reproducible on this version, which is a
   result rather than an absence of one. The case stays, because the behaviour
   is worth asserting continuously rather than once.
+
+  OpenObserve v0.92.2: N/A, no Elasticsearch query endpoint to ask.

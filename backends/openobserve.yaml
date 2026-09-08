@@ -65,6 +65,45 @@ protocols:
         severityText: /severity
         timeUnixNano: /_timestamp
 
+  # OpenObserve also accepts the Elasticsearch _bulk API, and confirmed by hand
+  # on 2026-09-08 it stores what that API is given: all four documents of the
+  # es-bulk dataset land and are retrievable.
+  #
+  # It exposes no Elasticsearch-compatible search endpoint. Every path tried
+  # answered 404: /api/{org}/{stream}/_search, /es/{stream}/_search, /es/_search,
+  # /api/{org}/_msearch and /api/{org}/{stream}/_msearch. Read-back therefore
+  # goes through OpenObserve's own SQL API, which is a rename of the transport
+  # and not of any value, and the adapter declares no `query` block at all — so
+  # a query-semantics case reads N/A with its reason rather than a verdict.
+  #
+  # That combination is the finding this column carries: the ingest half of the
+  # Elasticsearch API is implemented and the query half is not, so data written
+  # through it cannot be read back through it. A migration that assumed the
+  # protocol was supported would move the writes and strand the queries.
+  #
+  # Attribute keys are flattened with `.` replaced by `_`, as on the OTLP path,
+  # so `specmatrix.run` is stored as `specmatrix_run`.
+  es-bulk:
+    formats: [es-ndjson]
+    ingest:
+      request: POST /api/default/_bulk
+      headers:
+        Content-Type: application/x-ndjson
+    readback:
+      request: POST /api/default/_search
+      body:
+        query:
+          sql: "SELECT * FROM \"{{ suite_stream }}\" WHERE specmatrix_run = '{{ run_key }}'"
+          start_time: "{{ window_start_us }}"
+          end_time: "{{ window_end_us }}"
+      records: /hits
+      fields:
+        message: /message
+        level: /level
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000
+
 normalise:
   drop_fields:
     - _timestamp

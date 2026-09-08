@@ -1,8 +1,8 @@
-{"index":{}}
+{"index":{"_index":"{{ suite_stream }}"}}
 {"doc":"with-field-match","status":500,"service":"api","specmatrix.run":"{{ run_key }}"}
-{"index":{}}
+{"index":{"_index":"{{ suite_stream }}"}}
 {"doc":"with-field-other","status":200,"service":"api","specmatrix.run":"{{ run_key }}"}
-{"index":{}}
+{"index":{"_index":"{{ suite_stream }}"}}
 {"doc":"field-absent","service":"api","specmatrix.run":"{{ run_key }}"}
-{"index":{}}
+{"index":{"_index":"{{ suite_stream }}"}}
 {"doc":"field-null","status":null,"service":"api","specmatrix.run":"{{ run_key }}"}
