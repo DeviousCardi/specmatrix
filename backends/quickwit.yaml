@@ -60,6 +60,14 @@ container:
   ready:
     request: GET /health/livez
     expect_status: 200
+    # Measured on 2026-09-08, not guessed. /health/livez answers at 4.2s and
+    # otel-logs-v0_7 appears immediately after, but the OTLP write path refuses
+    # for about a second more: an ingest in that window answers
+    # 500 `status: Internal` and reads as the store rejecting ordinary traffic.
+    # Five seconds is margin over a one-second gap. It applies only when the
+    # runner starts the container, and it changes nothing about what is sent or
+    # how any verdict is decided.
+    settle_ms: 5000
 
 auth:
   kind: none
@@ -69,29 +77,21 @@ auth:
 # write `{{ run_key_field }}` rather than either spelling.
 run_key_field: specmatrix.run
 
-setup:
-  request: POST /api/v1/indexes
-  body:
-    version: "0.8"
-    index_id: "{{ suite_stream }}"
-    doc_mapping:
-      mode: dynamic
-
-# Confirmed necessary on 2026-09-08. Quickwit answers "already exists" to a
-# create issued while a delete is still in flight, so a tolerated 400 is not
-# proof the index is there; the write then lands on an index about to vanish
-# and the ingest answers 404. This ran as a rejected control against a correct
-# adapter, which is a false finding of the worst kind — a store blamed for the
-# harness's own race.
-setup_verify:
-  request: GET /api/v1/indexes/{{ suite_stream }}
-
-teardown:
-  request: DELETE /api/v1/indexes/{{ suite_stream }}
-
 protocols:
   otlp-logs:
     formats: [otlp-protobuf]
+    # Quickwit creates otel-logs-v0_7 itself at start-up, a little after
+    # /health/livez begins answering. A case measured in that window gets
+    # 500 `index otel-logs-v0_7 not found` and reads as the store rejecting
+    # ordinary traffic — a false finding produced by the harness being early.
+    # No setup: this index is not ours to create, only to wait for. The
+    # backend-wide setup that creates an index for the Elasticsearch API is
+    # deliberately not inherited here.
+    setup_verify:
+      request: GET /api/v1/indexes/otel-logs-v0_7
+      poll:
+        interval_ms: 500
+        timeout_ms: 60000
     ingest:
       request: POST /api/v1/otlp/v1/logs
       headers:
@@ -132,6 +132,25 @@ protocols:
   # arranging its own result.
   es-bulk:
     formats: [es-ndjson]
+    # Quickwit will not create an index on write, so this protocol creates one
+    # per case and removes it afterwards. These belong to es-bulk rather than
+    # to the backend: the OTLP index is Quickwit's own and is not ours to make.
+    setup:
+      request: POST /api/v1/indexes
+      body:
+        version: "0.8"
+        index_id: "{{ suite_stream }}"
+        doc_mapping:
+          mode: dynamic
+    # Confirmed necessary on 2026-09-08. Quickwit answers "already exists" to a
+    # create issued while a delete is still in flight, so a tolerated 400 is not
+    # proof the index is there; the write then lands on an index about to vanish
+    # and the ingest answers 404. That ran as a rejected control against a
+    # correct adapter — a store blamed for the harness's own race.
+    setup_verify:
+      request: GET /api/v1/indexes/{{ suite_stream }}
+    teardown:
+      request: DELETE /api/v1/indexes/{{ suite_stream }}
     ingest:
       request: POST /api/v1/_elastic/{{ suite_stream }}/_bulk
       headers:
