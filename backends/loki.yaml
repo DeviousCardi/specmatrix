@@ -1,0 +1,66 @@
+# Adapter for Grafana Loki.
+#
+# Confirmed by hand against 3.1.1 on 2026-09-08. Loki is also the reference
+# implementation for the Loki push protocol, which arrives in 1.0; this adapter
+# covers only its OTLP endpoint, where it is one column among several rather
+# than the definition.
+#
+# Unlike Quickwit and VictoriaLogs it accepts OTLP in both encodings, and
+# answers 204 rather than 200 — a success either way, and the runner treats any
+# 2xx as accepted.
+#
+# What decides the read-back query, and what had to be confirmed rather than
+# assumed: an OTLP attribute does not become a stream label. `specmatrix.run`
+# is flattened to `specmatrix_run` and kept as *structured metadata*, so the
+# selector `{specmatrix_run="..."}` matches nothing at all. It has to be a
+# stream selector followed by a structured-metadata filter, which is why the
+# query below selects on service_name — a label Loki does derive from
+# service.name — and then filters by run key.
+#
+# The query is passed as a parameter rather than written into the path. A LogQL
+# selector carries braces, quotes and a pipe, and pasting one into a URL is
+# refused with 400 before Loki sees it.
+
+name: loki
+# Loki refuses a query range over 30d1h with a 400, so the read-back window is
+# narrowed here rather than the corpus narrowing it for every store.
+lookback_days: 29
+version_from:
+  request: GET /loki/api/v1/status/buildinfo
+  field: version
+
+container:
+  image: grafana/loki:3.1.1
+  port: 3100
+  ready:
+    request: GET /ready
+    expect_status: 200
+
+auth:
+  kind: none
+
+protocols:
+  otlp-logs:
+    formats: [otlp-json, otlp-protobuf]
+    ingest:
+      request: POST /otlp/v1/logs
+      headers:
+        Content-Type: application/json
+    readback:
+      request: GET /loki/api/v1/query_range
+      params:
+        query: '{service_name="specmatrix"}|specmatrix_run="{{ run_key }}"'
+        start: "{{ window_start_ns }}"
+        end: "{{ window_end_ns }}"
+        limit: "10"
+      records: /data/result
+      # Renames only. A Loki entry is a [timestamp, line] pair, so the body and
+      # the timestamp are read out of the first value.
+      fields:
+        body: /values/0/1
+        timeUnixNano: /values/0/0
+        severityText: /stream/severity_text
+        severityNumber: /stream/severity_number
+      poll:
+        interval_ms: 500
+        timeout_ms: 30000

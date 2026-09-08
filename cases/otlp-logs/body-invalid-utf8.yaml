@@ -47,3 +47,22 @@ notes: >
   VictoriaLogs v1.52.0: N/A, for the same reason as Quickwit. It refuses OTLP
   JSON — "json encoding isn't supported for opentelemetry format. Use protobuf
   encoding", HTTP 400 — and this payload cannot exist as protobuf.
+
+  Loki 3.1.1: ALTER, and the first store in the corpus to do what this case was
+  written to catch. Confirmed by hand on 2026-09-08:
+
+    ingest HTTP 204
+    stored line : 'before-\ufffd\ufffd-after'
+    utf-8 bytes : b'before-\xef\xbf\xbd\xef\xbf\xbd-after'
+
+  The two invalid bytes 0xff 0xfe were each replaced with U+FFFD. Nothing
+  errored, nothing warned, and the body that comes back is not the body that
+  was sent. Parseable and OpenObserve refuse the same payload with a 400, which
+  the rule also permits; Quickwit and VictoriaLogs never see it, because they
+  take protobuf only and a protobuf string cannot carry those bytes.
+
+  The rule permits replacement when a backend documents it, so this verdict is
+  on the behaviour rather than on the documentation. If Loki documents the
+  substitution, that belongs in this note and the finding becomes a much
+  narrower one about discoverability. It has not been checked, and the issue
+  filed upstream should ask rather than assert.

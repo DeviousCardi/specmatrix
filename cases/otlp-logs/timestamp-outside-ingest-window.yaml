@@ -109,3 +109,23 @@ notes: >
   merely encodes the report unreadably, VictoriaLogs sends nothing at all: no
   count, no message, no error. Of the two, this is the one a caller has no way
   to detect.
+
+  Loki 3.1.1: PASS, and it is the store that shows what the conformant answer
+  looks like. It refuses the record with a 400 and says exactly why:
+
+    entry for stream '{service_name="specmatrix"}' has timestamp too old:
+    2026-08-09T14:44:50Z, oldest acceptable timestamp is: ...
+
+  The caller is told, at the door, in the response to the write. Three stores,
+  three answers to the same payload:
+
+    Loki 3.1.1           400 with a message naming the limit      PASS
+    OpenObserve v0.92.2  200, partial_success in the wrong
+                         encoding, record discarded               ALTER
+    VictoriaLogs v1.52.0 200, Content-Length: 0, record
+                         discarded                                ALTER
+
+  Parseable v2.9.4 and Quickwit 0.8.2 simply keep the record, which is also
+  fine. The divergence is not that stores have different retention — that is
+  configuration — it is that two of them use the success path to report a
+  failure while a third refuses and explains.

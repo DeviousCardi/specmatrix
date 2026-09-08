@@ -33,3 +33,5 @@ notes: >
   Quickwit 0.8.2: PASS. Three stores now, none of which requires schemaUrl.
 
   VictoriaLogs v1.52.0: PASS. Four stores, none requiring schemaUrl.
+
+  Loki 3.1.1: PASS. Five stores, none requiring schemaUrl.

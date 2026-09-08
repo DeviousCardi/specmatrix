@@ -23,6 +23,12 @@ pub struct Backend {
     /// one backend's spelling into a shared case would make the case a test of
     /// that backend's mapping.
     pub run_key_field: Option<String>,
+    /// How far back the read-back window reaches, in days. The default is wide
+    /// because a record is found by its run key rather than by when it claims
+    /// to have happened. Some stores cap the range a query may span — Loki
+    /// 3.1.1 refuses anything over 30d1h with a 400 — so they narrow it here
+    /// rather than the corpus narrowing it for everyone.
+    pub lookback_days: Option<i64>,
     #[serde(default)]
     pub normalise: Normalise,
     /// A request sent before each case's ingest, after teardown. Some stores
@@ -85,6 +91,12 @@ pub struct Request {
     pub request: String,
     #[serde(default)]
     pub headers: HashMap<String, String>,
+    /// Query parameters, percent-encoded by the runner. Use these rather than
+    /// writing a query string into `request`: a value that is safe by accident,
+    /// like a hex run key, hides the fact that one containing a brace, a quote
+    /// or a space is refused before it reaches the store.
+    #[serde(default)]
+    pub params: HashMap<String, String>,
     pub body: Option<serde_json::Value>,
 }
 
@@ -136,6 +148,29 @@ impl Backend {
 
     pub fn image(&self) -> Option<String> {
         self.container.get("image").and_then(|v| v.as_str()).map(str::to_string)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A request with no params keeps working unchanged, so adapters written
+    /// before this existed are unaffected.
+    #[test]
+    fn params_default_to_empty() {
+        let req: Request = serde_yaml::from_str("request: GET /health").unwrap();
+        assert!(req.params.is_empty());
+    }
+
+    #[test]
+    fn params_are_read_as_written() {
+        let req: Request = serde_yaml::from_str(
+            "request: GET /loki/api/v1/query_range\nparams:\n  query: '{a=\"b\"}|c=\"d\"'\n  limit: \"10\"",
+        )
+        .unwrap();
+        assert_eq!(req.params.get("query").unwrap(), "{a=\"b\"}|c=\"d\"");
+        assert_eq!(req.params.get("limit").unwrap(), "10");
     }
 }
 
