@@ -190,8 +190,12 @@ impl Default for Poll {
         Self { interval_ms: default_interval(), timeout_ms: default_timeout() }
     }
 }
-fn default_interval() -> u64 { 500 }
-fn default_timeout() -> u64 { 15_000 }
+fn default_interval() -> u64 {
+    500
+}
+fn default_timeout() -> u64 {
+    15_000
+}
 
 #[derive(Debug, Deserialize, Default)]
 pub struct Normalise {
@@ -220,6 +224,17 @@ impl Backend {
     }
 }
 
+impl Request {
+    /// Split `METHOD /path` into its parts.
+    pub fn parts(&self) -> Result<(String, String)> {
+        let (m, p) = self
+            .request
+            .split_once(' ')
+            .with_context(|| format!("request must be `METHOD /path`, got {:?}", self.request))?;
+        Ok((m.trim().to_uppercase(), p.trim().to_string()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,16 +255,5 @@ mod tests {
         .unwrap();
         assert_eq!(req.params.get("query").unwrap(), "{a=\"b\"}|c=\"d\"");
         assert_eq!(req.params.get("limit").unwrap(), "10");
-    }
-}
-
-impl Request {
-    /// Split `METHOD /path` into its parts.
-    pub fn parts(&self) -> Result<(String, String)> {
-        let (m, p) = self
-            .request
-            .split_once(' ')
-            .with_context(|| format!("request must be `METHOD /path`, got {:?}", self.request))?;
-        Ok((m.trim().to_uppercase(), p.trim().to_string()))
     }
 }

@@ -212,8 +212,7 @@ env:
                 .container
                 .as_ref()
                 .unwrap_or_else(|| panic!("{} declares no container", path.display()));
-            check_pinned(container)
-                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            check_pinned(container).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         }
     }
 }

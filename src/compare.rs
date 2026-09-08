@@ -218,7 +218,7 @@ pub fn equal(sent: &Option<Value>, got: &Option<Value>, kind: Kind) -> bool {
         },
         Kind::Text => match (sent, got) {
             (Value::String(a), Value::String(b)) => a == b,
-            _ => sent.to_string() == got.to_string(),
+            _ => sent == got,
         },
     }
 }
@@ -346,7 +346,11 @@ mod tests {
 
     #[test]
     fn an_integer_compares_across_string_and_number() {
-        assert!(equal(&Some(json!("9007199254740993")), &Some(json!(9007199254740993i64)), Kind::Integer));
+        assert!(equal(
+            &Some(json!("9007199254740993")),
+            &Some(json!(9007199254740993i64)),
+            Kind::Integer
+        ));
         assert!(!equal(&Some(json!("42")), &Some(json!(43)), Kind::Integer));
     }
 

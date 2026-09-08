@@ -79,9 +79,8 @@ pub struct Runner {
 
 impl Runner {
     pub fn new(backend: Backend, base_url: String, verbose: bool) -> Result<Self> {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?;
+        let client =
+            reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build()?;
         Ok(Self { backend, base_url: base_url.trim_end_matches('/').to_string(), client, verbose })
     }
 
@@ -156,11 +155,10 @@ impl Runner {
 
     fn run_case(&self, suite: &str, case: &Case) -> Result<CheckResult> {
         let vars = self.vars_for(case);
-        let protocol = self
-            .backend
-            .protocols
-            .get(suite)
-            .with_context(|| format!("adapter {} has no protocol {suite}", self.backend.name))?;
+        let protocol =
+            self.backend.protocols.get(suite).with_context(|| {
+                format!("adapter {} has no protocol {suite}", self.backend.name)
+            })?;
 
         // A backend that speaks no encoding this case can be sent in is not
         // failing the check, it is ineligible for it. Sending anyway would
@@ -203,8 +201,7 @@ impl Runner {
         // and an "after" teardown is precisely the one that did not run.
         let teardown = protocol.teardown.as_ref().or(self.backend.teardown.as_ref());
         let setup = protocol.setup.as_ref().or(self.backend.setup.as_ref());
-        let setup_verify =
-            protocol.setup_verify.as_ref().or(self.backend.setup_verify.as_ref());
+        let setup_verify = protocol.setup_verify.as_ref().or(self.backend.setup_verify.as_ref());
 
         if let Some(teardown) = teardown {
             let _ = self.send_declared(teardown, &vars);
@@ -292,7 +289,11 @@ impl Runner {
         }
 
         let Some(expect) = case.expect.readback.as_ref() else {
-            return Ok(self.result(case, Verdict::Pass, format!("{status}, no read-back declared{reported}")));
+            return Ok(self.result(
+                case,
+                Verdict::Pass,
+                format!("{status}, no read-back declared{reported}"),
+            ));
         };
         let Some(readback) = protocol.readback.as_ref() else {
             return Ok(self.result(
@@ -368,16 +369,20 @@ impl Runner {
                 }
 
                 match expect.match_.as_str() {
-                    "exact" if observed.is_empty() => {
-                        Ok(self.result(case, Verdict::Pass, format!("{status}, round trip intact{reported}")))
-                    }
+                    "exact" if observed.is_empty() => Ok(self.result(
+                        case,
+                        Verdict::Pass,
+                        format!("{status}, round trip intact{reported}"),
+                    )),
                     "exact" => Ok(self.result(case, Verdict::Alter, observed.join("; "))),
                     // `present` is for values the project has not adjudicated.
                     // Show what the backend stored so the divergence is visible,
                     // but do not call it a failure on the strength of a guess.
-                    "present" => {
-                        Ok(self.result(case, Verdict::Pass, format!("recorded — {}", observed.join("; "))))
-                    }
+                    "present" => Ok(self.result(
+                        case,
+                        Verdict::Pass,
+                        format!("recorded — {}", observed.join("; ")),
+                    )),
                     other => anyhow::bail!(
                         "case {} declares readback.match: {other:?}; expected `exact` or `present`",
                         case.id
@@ -393,24 +398,17 @@ impl Runner {
 
     /// Variables available to payloads and adapter templates.
     fn vars_for(&self, case: &Case) -> Vars {
-        let run_key = format!(
-            "sm-{:x}",
-            rand::random::<u64>()
-        );
+        let run_key = format!("sm-{:x}", rand::random::<u64>());
         // One stream per case keeps a failure in one check from contaminating
         // the next, and makes teardown a single call.
-        let stream = format!(
-            "specmatrix_{}",
-            case.id.replace(['/', '-', '.'], "_").to_lowercase()
-        );
+        let stream = format!("specmatrix_{}", case.id.replace(['/', '-', '.'], "_").to_lowercase());
         let mut vars = Vars::new();
         vars.insert("run_key", run_key);
         vars.insert("suite_stream", stream);
         if let Some(field) = self.backend.run_key_field.clone() {
             vars.insert("run_key_field", field);
         }
-        for (key, value) in
-            time_vars(chrono::Utc::now(), self.backend.lookback_days.unwrap_or(730))
+        for (key, value) in time_vars(chrono::Utc::now(), self.backend.lookback_days.unwrap_or(730))
         {
             vars.insert(key, value);
         }
@@ -434,11 +432,8 @@ impl Runner {
         // and pipes, and pasting one into the path produces a 400 before the
         // store ever sees it.
         if !req.params.is_empty() {
-            let mut params: Vec<(String, String)> = req
-                .params
-                .iter()
-                .map(|(k, v)| (k.clone(), template::render(v, vars)))
-                .collect();
+            let mut params: Vec<(String, String)> =
+                req.params.iter().map(|(k, v)| (k.clone(), template::render(v, vars))).collect();
             params.sort();
             builder = builder.query(&params);
         }
@@ -726,7 +721,10 @@ fn ingest_verdict(expected: &str, accepted: bool) -> Result<Option<Verdict>> {
 /// fixed instant ages out of a store's ingest window, and then a check measures
 /// the fixture rather than the backend — which is what the 0.1 OpenObserve
 /// adapter had to widen `ZO_INGEST_ALLOWED_UPTO` to work around.
-fn time_vars(now: chrono::DateTime<chrono::Utc>, lookback_days: i64) -> Vec<(&'static str, String)> {
+fn time_vars(
+    now: chrono::DateTime<chrono::Utc>,
+    lookback_days: i64,
+) -> Vec<(&'static str, String)> {
     let nanos = now.timestamp_nanos_opt().unwrap_or_default() as i128;
     let day: i128 = 86_400_000_000_000;
     // Truncated to the second, then a fixed sub-second remainder. A live
@@ -749,7 +747,11 @@ fn time_vars(now: chrono::DateTime<chrono::Utc>, lookback_days: i64) -> Vec<(&'s
         ("window_start_us", start_us.to_string()),
         ("window_end_us", end_us.to_string()),
         ("window_start_ns", start.timestamp_nanos_opt().unwrap_or_default().to_string()),
-        ("window_end_ns", ((now + chrono::Duration::days(1)).timestamp_nanos_opt().unwrap_or_default()).to_string()),
+        (
+            "window_end_ns",
+            ((now + chrono::Duration::days(1)).timestamp_nanos_opt().unwrap_or_default())
+                .to_string(),
+        ),
         ("now_ns", nanos.to_string()),
         ("now_ns_fractional", fractional.to_string()),
         ("now_us", now.timestamp_micros().to_string()),
@@ -770,20 +772,13 @@ fn first_record(
     records_pointer: &str,
     run_key: &str,
 ) -> Option<serde_json::Value> {
-    let node = if records_pointer.is_empty() {
-        value
-    } else {
-        value.pointer(records_pointer)?
-    };
+    let node = if records_pointer.is_empty() { value } else { value.pointer(records_pointer)? };
     let items: Vec<&serde_json::Value> = match node {
         serde_json::Value::Array(items) => items.iter().collect(),
         serde_json::Value::Object(_) => vec![node],
         _ => return None,
     };
-    items
-        .into_iter()
-        .find(|record| record.to_string().contains(run_key))
-        .cloned()
+    items.into_iter().find(|record| record.to_string().contains(run_key)).cloned()
 }
 
 /// Parses the payload we sent so its fields can be compared with what came
@@ -807,7 +802,11 @@ fn parse_sent(bytes: &[u8]) -> (serde_json::Value, bool) {
 
 fn first_line(text: &str) -> String {
     let line = text.lines().next().unwrap_or("").trim();
-    if line.len() > 120 { format!("{}…", &line[..120]) } else { line.to_string() }
+    if line.len() > 120 {
+        format!("{}…", &line[..120])
+    } else {
+        line.to_string()
+    }
 }
 
 /// End-to-end tests of the verdict pipeline against a stub backend.
@@ -825,7 +824,7 @@ mod pipeline {
 
     /// An adapter pointed at the stub. `readback` is the response body the
     /// query returns, in order; the last one repeats.
-    fn runner_for(url: &str, readback: Vec<Reply>, ingest: Reply) -> Runner {
+    fn runner_for(url: &str, _readback: Vec<Reply>, _ingest: Reply) -> Runner {
         let adapter: Backend = serde_yaml::from_str(
             r#"
 name: stub
@@ -846,7 +845,6 @@ protocols:
 "#,
         )
         .expect("adapter parses");
-        let _ = ingest;
         Runner::new(adapter, url.to_string(), false).expect("runner builds")
     }
 
@@ -867,12 +865,6 @@ expect:
         .expect("case parses");
         case.dir = std::path::PathBuf::from("cases/otlp-logs");
         case
-    }
-
-    fn record_matching(run_key_holder: &str) -> String {
-        format!(
-            r#"{{"hits":[{{"message":"specmatrix minimal record","severity":"INFO","specmatrix.run":"{run_key_holder}"}}]}}"#
-        )
     }
 
     /// A write that lands and reads back unchanged is the only thing that
@@ -1202,10 +1194,7 @@ protocols:
     /// backend, and printing one fact five times helps nobody.
     #[test]
     fn a_failing_control_marks_the_rest_of_the_suite_not_applicable() {
-        let stub = stub::start(vec![(
-            "/ingest",
-            vec![Reply::json(400, r#"{"error":"refused"}"#)],
-        )]);
+        let stub = stub::start(vec![("/ingest", vec![Reply::json(400, r#"{"error":"refused"}"#)])]);
         let runner = runner_for(&stub.url, vec![], Reply::json(400, ""));
         let mut control = case_yaml("");
         control.control = true;
@@ -1243,7 +1232,11 @@ protocols:
         let runner = Runner::new(adapter, "http://127.0.0.1:1".into(), false).unwrap();
         let outcome = runner.run_suite("otlp-logs", &[case_yaml("")]);
         assert_eq!(outcome.results[0].verdict, Verdict::NotApplicable);
-        assert!(outcome.results[0].detail.starts_with("harness error"), "{}", outcome.results[0].detail);
+        assert!(
+            outcome.results[0].detail.starts_with("harness error"),
+            "{}",
+            outcome.results[0].detail
+        );
     }
 
     /// A query check compares which rows come back, not one record's fields.

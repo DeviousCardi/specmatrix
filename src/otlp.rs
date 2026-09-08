@@ -124,9 +124,8 @@ pub fn export_report(
             .and_then(|m| m.as_str())
             .unwrap_or_default()
             .to_string();
-        let mismatch = (!expected_json).then(|| {
-            "request was protobuf, response body is JSON".to_string()
-        });
+        let mismatch =
+            (!expected_json).then(|| "request was protobuf, response body is JSON".to_string());
         return Some(ExportReport { rejected, message, encoding_mismatch: mismatch });
     }
 
@@ -137,9 +136,7 @@ pub fn export_report(
     let partial = decoded.partial_success?;
     let mismatch = expected_json.then(|| {
         let claimed = content_type.unwrap_or("none");
-        format!(
-            "request was JSON, response body is protobuf and content-type says {claimed}"
-        )
+        format!("request was JSON, response body is protobuf and content-type says {claimed}")
     });
     Some(ExportReport {
         rejected: partial.rejected_log_records,
@@ -248,8 +245,7 @@ mod tests {
     #[test]
     fn a_protobuf_report_to_a_protobuf_request_is_not_a_mismatch() {
         let body = protobuf_response(1, "too old");
-        let report =
-            export_report("otlp-protobuf", Some("application/x-protobuf"), &body).unwrap();
+        let report = export_report("otlp-protobuf", Some("application/x-protobuf"), &body).unwrap();
         assert_eq!(report.rejected, 1);
         assert_eq!(report.message, "too old");
         assert_eq!(report.encoding_mismatch, None);

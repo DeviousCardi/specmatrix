@@ -8,11 +8,7 @@
 use crate::runner::{Outcome, Verdict};
 
 pub fn print_table(outcome: &Outcome) {
-    let version = outcome
-        .backend_version
-        .as_deref()
-        .map(|v| format!(" {v}"))
-        .unwrap_or_default();
+    let version = outcome.backend_version.as_deref().map(|v| format!(" {v}")).unwrap_or_default();
     println!("\n  {}{}  {}", outcome.backend, version, outcome.url);
     println!("  suite: {}\n", outcome.suite);
 

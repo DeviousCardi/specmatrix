@@ -21,22 +21,19 @@ pub struct Matrix {
 }
 
 impl Matrix {
-    pub fn new(suite: &str, outcomes: Vec<Outcome>, generated: chrono::DateTime<chrono::Utc>) -> Self {
-        Matrix {
-            generated: generated.to_rfc3339(),
-            suite: suite.to_string(),
-            outcomes,
-        }
+    pub fn new(
+        suite: &str,
+        outcomes: Vec<Outcome>,
+        generated: chrono::DateTime<chrono::Utc>,
+    ) -> Self {
+        Matrix { generated: generated.to_rfc3339(), suite: suite.to_string(), outcomes }
     }
 
     /// Every check any column ran, so a column that skipped one is visibly
     /// blank rather than quietly missing from the table.
     pub fn check_ids(&self) -> Vec<&str> {
-        let ids: BTreeSet<&str> = self
-            .outcomes
-            .iter()
-            .flat_map(|o| o.results.iter().map(|r| r.id.as_str()))
-            .collect();
+        let ids: BTreeSet<&str> =
+            self.outcomes.iter().flat_map(|o| o.results.iter().map(|r| r.id.as_str())).collect();
         ids.into_iter().collect()
     }
 
@@ -59,7 +56,9 @@ impl Matrix {
             page.push_str(&format!("| `{id}` |"));
             for outcome in &self.outcomes {
                 let cell = match outcome.results.iter().find(|r| r.id == id) {
-                    Some(result) => format!("{} — {}", label(result.verdict), escape(&result.detail)),
+                    Some(result) => {
+                        format!("{} — {}", label(result.verdict), escape(&result.detail))
+                    }
                     None => "not run".to_string(),
                 };
                 page.push_str(&format!(" {cell} |"));
@@ -111,10 +110,9 @@ impl Matrix {
         out.push_str("</tr></thead>\n<tbody>\n");
 
         for id in self.check_ids() {
-            let file = id.replace('/', "/");
             out.push_str(&format!(
                 "<tr><th class=\"check\"><a href=\"../../../cases/{}.yaml\"><code>{}</code></a></th>",
-                escape_html(&file),
+                escape_html(id),
                 escape_html(id)
             ));
             for outcome in &self.outcomes {
@@ -132,7 +130,9 @@ impl Matrix {
                             escape_html(&result.detail)
                         ));
                     }
-                    None => out.push_str("<td class=\"notrun\"><span class=\"v\">not run</span></td>"),
+                    None => {
+                        out.push_str("<td class=\"notrun\"><span class=\"v\">not run</span></td>")
+                    }
                 }
             }
             out.push_str("</tr>\n");
@@ -213,8 +213,12 @@ mod tests {
     use super::*;
     use crate::runner::CheckResult;
 
-    fn outcome(backend: &str, version: Option<&str>, image: Option<&str>,
-               rows: Vec<(&str, Verdict, &str)>) -> Outcome {
+    fn outcome(
+        backend: &str,
+        version: Option<&str>,
+        image: Option<&str>,
+        rows: Vec<(&str, Verdict, &str)>,
+    ) -> Outcome {
         Outcome {
             backend: backend.to_string(),
             backend_version: version.map(str::to_string),
@@ -240,14 +244,28 @@ mod tests {
         Matrix::new(
             "otlp-logs",
             vec![
-                outcome("parseable", Some("2.9.4"), Some("quay.io/parseablehq/parseable:v2.9.4"), vec![
-                    ("otlp-logs/minimal-record", Verdict::Pass, "200, round trip intact"),
-                    ("otlp-logs/body-invalid-utf8", Verdict::Reject, "400 invalid unicode"),
-                ]),
-                outcome("loki", Some("release-3.1.x-89fe788"), Some("grafana/loki:3.1.1"), vec![
-                    ("otlp-logs/minimal-record", Verdict::Pass, "204, round trip intact"),
-                    ("otlp-logs/body-invalid-utf8", Verdict::Alter, "bytes replaced with U+FFFD"),
-                ]),
+                outcome(
+                    "parseable",
+                    Some("2.9.4"),
+                    Some("quay.io/parseablehq/parseable:v2.9.4"),
+                    vec![
+                        ("otlp-logs/minimal-record", Verdict::Pass, "200, round trip intact"),
+                        ("otlp-logs/body-invalid-utf8", Verdict::Reject, "400 invalid unicode"),
+                    ],
+                ),
+                outcome(
+                    "loki",
+                    Some("release-3.1.x-89fe788"),
+                    Some("grafana/loki:3.1.1"),
+                    vec![
+                        ("otlp-logs/minimal-record", Verdict::Pass, "204, round trip intact"),
+                        (
+                            "otlp-logs/body-invalid-utf8",
+                            Verdict::Alter,
+                            "bytes replaced with U+FFFD",
+                        ),
+                    ],
+                ),
             ],
             when,
         )
@@ -320,10 +338,16 @@ mod tests {
     #[test]
     fn a_pipe_in_a_detail_does_not_break_the_table() {
         let when = chrono::Utc::now();
-        let matrix = Matrix::new("es-bulk", vec![outcome(
-            "quickwit", Some("0.8.2"), Some("quickwit/quickwit:0.8.2"),
-            vec![("es-bulk/x", Verdict::Alter, r#"query {a="b"}|c="d" disagreed"#)],
-        )], when);
+        let matrix = Matrix::new(
+            "es-bulk",
+            vec![outcome(
+                "quickwit",
+                Some("0.8.2"),
+                Some("quickwit/quickwit:0.8.2"),
+                vec![("es-bulk/x", Verdict::Alter, r#"query {a="b"}|c="d" disagreed"#)],
+            )],
+            when,
+        );
         let page = matrix.to_markdown();
         let row = page.lines().find(|l| l.contains("es-bulk/x")).unwrap();
         assert_eq!(row.matches('|').count() - row.matches("\\|").count(), 3, "{row}");
@@ -362,10 +386,16 @@ mod tests {
     #[test]
     fn a_detail_containing_markup_is_escaped() {
         let when = chrono::Utc::now();
-        let matrix = Matrix::new("es-bulk", vec![outcome(
-            "stub", Some("1"), Some("stub:1"),
-            vec![("es-bulk/x", Verdict::Alter, r#"<script>alert("x")</script> & "quoted""#)],
-        )], when);
+        let matrix = Matrix::new(
+            "es-bulk",
+            vec![outcome(
+                "stub",
+                Some("1"),
+                Some("stub:1"),
+                vec![("es-bulk/x", Verdict::Alter, r#"<script>alert("x")</script> & "quoted""#)],
+            )],
+            when,
+        );
         let page = matrix.to_html(None);
         assert!(!page.contains("<script>"), "markup must be escaped");
         assert!(page.contains("&lt;script&gt;"), "{page}");
