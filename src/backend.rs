@@ -70,6 +70,16 @@ pub struct Container {
 pub struct Ready {
     pub request: String,
     pub expect_status: u16,
+    /// How long to wait after the probe passes before the store is used.
+    ///
+    /// A last resort, and only for the gap between a store answering health
+    /// checks and its write path working — measured, not guessed, and recorded
+    /// in the adapter with the measurement. It applies only when the runner
+    /// starts the container; a store that is already warm is unaffected. It is
+    /// never a way to make a check pass: nothing here changes what is sent or
+    /// how a verdict is decided.
+    #[serde(default)]
+    pub settle_ms: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,6 +110,14 @@ pub struct Protocol {
     pub formats: Vec<String>,
     pub ingest: Request,
     pub readback: Option<Readback>,
+    /// Preconditions for this protocol, overriding the backend-wide ones when
+    /// present. A store can need a different thing per protocol: Quickwit
+    /// creates the index for its Elasticsearch API on demand and creates the
+    /// OTLP one itself at start-up, so what has to hold before a case runs is
+    /// not the same in both.
+    pub setup: Option<Request>,
+    pub setup_verify: Option<Verify>,
+    pub teardown: Option<Request>,
     /// Where a query-semantics check sends its query and where the rows come
     /// back. Separate from `readback` because it asks a different question and
     /// a backend may answer it at a different endpoint.

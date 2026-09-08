@@ -201,14 +201,19 @@ impl Runner {
         // check cannot tolerate, since it asserts on exactly which rows come
         // back. Sent before rather than after: a run that crashes leaves state,
         // and an "after" teardown is precisely the one that did not run.
-        if let Some(teardown) = self.backend.teardown.as_ref() {
+        let teardown = protocol.teardown.as_ref().or(self.backend.teardown.as_ref());
+        let setup = protocol.setup.as_ref().or(self.backend.setup.as_ref());
+        let setup_verify =
+            protocol.setup_verify.as_ref().or(self.backend.setup_verify.as_ref());
+
+        if let Some(teardown) = teardown {
             let _ = self.send_declared(teardown, &vars);
         }
         // Then recreate whatever the store needs before it will accept a write.
         // A store that will not create an index on write has to be given one,
         // and the shape of that index belongs to the adapter: putting it in the
         // corpus would make a shared case carry one backend's schema.
-        if let Some(setup) = self.backend.setup.as_ref() {
+        if let Some(setup) = setup {
             let response = self.send_declared(setup, &vars)?;
             if !(200..300).contains(&response.status) && response.status != 400 {
                 // 400 is tolerated because several stores answer it for
@@ -219,14 +224,18 @@ impl Runner {
                     format!("setup failed: {} {}", response.status, first_line(&response.text())),
                 ));
             }
-            if let Some(verify) = self.backend.setup_verify.as_ref() {
-                if !self.wait_until_ready(verify, &vars)? {
-                    return Ok(self.result(
-                        case,
-                        Verdict::NotApplicable,
-                        "setup did not take effect within the adapter's timeout".to_string(),
-                    ));
-                }
+        }
+        // Independent of setup. A store that creates what it needs by itself
+        // still has to have finished doing so, and a case measured before it
+        // has reports the store's start-up as the store's behaviour.
+        if let Some(verify) = setup_verify {
+            if !self.wait_until_ready(verify, &vars)? {
+                return Ok(self.result(
+                    case,
+                    Verdict::NotApplicable,
+                    "the backend's preconditions did not hold within the adapter's timeout"
+                        .to_string(),
+                ));
             }
         }
 
@@ -1122,7 +1131,7 @@ protocols:
         let runner = Runner::new(adapter, stub.url.clone(), false).unwrap();
         let result = runner.run_case("otlp-logs", &case_yaml("")).expect("no harness error");
         assert_eq!(result.verdict, Verdict::NotApplicable);
-        assert!(result.detail.contains("did not take effect"), "{}", result.detail);
+        assert!(result.detail.contains("did not hold"), "{}", result.detail);
         assert!(!stub.paths().iter().any(|p| p.contains("/ingest")), "must not ingest");
     }
 

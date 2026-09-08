@@ -68,6 +68,9 @@ pub fn up(backend: &str, container: &Container) -> Result<String> {
     if let Some(ready) = &container.ready {
         wait_ready(&url, &ready.request, ready.expect_status)
             .with_context(|| format!("waiting for {backend} to become ready"))?;
+        if ready.settle_ms > 0 {
+            std::thread::sleep(Duration::from_millis(ready.settle_ms));
+        }
     }
     Ok(url)
 }
@@ -152,6 +155,17 @@ env:
         let image = args.iter().position(|a| a == "quay.io/parseablehq/parseable:v2.9.4");
         let command = args.iter().position(|a| a == "local-store");
         assert!(image < command, "{args:?}");
+    }
+
+    /// A settle is optional and defaults to none, so no adapter waits for a
+    /// gap it does not have.
+    #[test]
+    fn a_container_without_a_settle_waits_for_nothing() {
+        let c: Container = serde_yaml::from_str(
+            "image: x/y:1\nport: 1\nready:\n  request: GET /health\n  expect_status: 200\n",
+        )
+        .unwrap();
+        assert_eq!(c.ready.unwrap().settle_ms, 0);
     }
 
     #[test]
