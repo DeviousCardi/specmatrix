@@ -1,0 +1,28 @@
+id: otlp-logs/schema-url-omitted
+protocol: otlp-logs
+title: A resource and scope with no schemaUrl are accepted
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/logs/v1
+  text: >
+    schema_url is optional. Proto3 JSON encoding omits fields holding their
+    default value, so a Collector with no schema URL emits no schemaUrl key at
+    all. A receiver that requires the field rejects conformant traffic.
+  observed:
+    - https://github.com/parseablehq/parseable/issues/1751
+
+send:
+  format: otlp-json
+  body: cases/otlp-logs/schema-url-omitted.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [body, severityText]
+
+notes: >
+  Reported against Parseable v2.9.4 and not reproducible on that version when
+  checked by hand. Kept because the shape is what a conformant Collector sends,
+  so it is worth asserting continuously rather than once.

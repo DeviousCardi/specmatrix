@@ -1,0 +1,22 @@
+id: otlp-logs/empty-batch
+protocol: otlp-logs
+title: A request carrying no records is accepted
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.0
+  text: >
+    resourceLogs is a repeated field and may be empty. Collectors flush on a
+    timer, so an empty export is ordinary traffic rather than an error, and a
+    receiver that rejects it produces failures with no cause a user can act on.
+
+send:
+  format: otlp-json
+  body: cases/otlp-logs/empty-batch.json
+
+expect:
+  ingest: accepted
+
+notes: >
+  No read-back: there is nothing to read. This check only asserts that an empty
+  export is not treated as malformed.

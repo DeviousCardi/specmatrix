@@ -1,0 +1,21 @@
+id: otlp-logs/minimal-record
+protocol: otlp-logs
+title: An ordinary log record survives the round trip
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.0
+  text: >
+    A control, not a divergence. Every other check in this suite assumes the
+    adapter can write and read one record; when this fails the adapter is
+    misconfigured and the rest of the suite says nothing about the backend.
+
+send:
+  format: otlp-json
+  body: cases/otlp-logs/minimal-record.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [body, severityText]
