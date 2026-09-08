@@ -1,0 +1,45 @@
+id: otlp-logs/trace-id-all-zero
+protocol: otlp-logs
+title: An all-zero trace id means no trace, not a trace
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/logs/v1
+  section: LogRecord.trace_id
+  text: >
+    trace_id is 16 bytes and an all-zero value is defined as invalid: it means
+    the record is not associated with a trace. An exporter with no trace
+    context may emit the zero value rather than omitting the field. A receiver
+    that treats it as a real trace id correlates every untraced record in the
+    system with every other one.
+
+send:
+  format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
+  body: cases/otlp-logs/trace-id-all-zero.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [traceId]
+
+notes: >
+  Recorded rather than asserted: whether a store keeps the zeros, stores an
+  empty value, or drops the field is not settled by the specification. What
+  would be a finding is a store presenting it as a valid trace id.
+
+  Five stores, two behaviours, confirmed 2026-09-08:
+
+    Parseable v2.9.4     "00000000000000000000000000000000"  kept verbatim
+    OpenObserve v0.92.2  absent
+    Quickwit 0.8.2       absent
+    VictoriaLogs v1.52.0 absent
+    Loki 3.1.1           absent
+
+  Four stores drop the field, the reading the specification supports: an
+  all-zero trace id is invalid and means the record has no trace. Parseable
+  keeps the zeros as a value. Neither is a finding alone — nothing requires a
+  store to discard it — but a query for records belonging to trace
+  00000000000000000000000000000000 returns every untraced record on Parseable
+  and none on the others, with no error raised on either side.

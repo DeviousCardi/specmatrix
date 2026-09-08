@@ -1,0 +1,50 @@
+id: otlp-logs/timestamp-zero
+protocol: otlp-logs
+title: A time_unix_nano of zero means unknown, not the Unix epoch
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/logs/v1
+  section: LogRecord.time_unix_nano
+  text: >
+    time_unix_nano is the time the event occurred, and a value of 0 indicates
+    that the timestamp is unknown or missing. It is not a claim that the event
+    happened in January 1970. observed_time_unix_nano is present and carries a
+    real instant, so a store has somewhere to file the record; one that files
+    it at the epoch has invented a timestamp it was explicitly told it did not
+    have.
+
+send:
+  format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
+  body: cases/otlp-logs/timestamp-zero.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: present
+    on:
+      - field: timeUnixNano
+        as: timestamp
+
+notes: >
+  Recorded rather than asserted. The specification says what 0 means but not
+  what a store must do with it, so this reports where each store filed the
+  record.
+
+  Five stores, four behaviours, confirmed 2026-09-08:
+
+    Parseable v2.9.4     "1970-01-01T00:00:00"       filed at the epoch
+    OpenObserve v0.92.2  1788879093044954            filed at ingest time
+    VictoriaLogs v1.52.0 "2026-09-08T14:54:41.91Z"   filed at ingest time
+    Loki 3.1.1           "1788879336568235626"       filed at ingest time
+    Quickwit 0.8.2       ALTER, discarded            refused the record
+
+  The divergence has teeth even though no store is provably wrong. The same
+  export, sent to two of these, lands fifty-six years apart. Three substitute
+  the time they received it, which is a defensible reading of "unknown" and is
+  also a value the record did not carry.
+
+  Quickwit reports one rejected record in partial_success, so it is not silent
+  here — but that report is protobuf under a JSON content type, so a conformant
+  client never sees it.

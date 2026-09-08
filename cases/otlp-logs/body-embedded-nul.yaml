@@ -1,0 +1,35 @@
+id: otlp-logs/body-embedded-nul
+protocol: otlp-logs
+title: A body containing U+0000 is not truncated at the NUL
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/common/v1
+  section: AnyValue.string_value
+  text: >
+    U+0000 is a valid Unicode code point and its UTF-8 encoding is a valid byte
+    in a protobuf string, so a body containing a NUL is conformant input. This
+    is not the invalid-UTF-8 case, where the bytes are not valid UTF-8 and a
+    decoder is permitted to reject them. Here the payload is well formed, so
+    truncating the body at the NUL, dropping the character, or refusing the
+    record are each a change to conformant data rather than a defence against
+    malformed data.
+  observed:
+    - docs/TEST-CASES.md, encoding category
+
+send:
+  format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
+  body: cases/otlp-logs/body-embedded-nul.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: exact
+    on: [body]
+
+notes: >
+  All five stores PASS with the NUL intact, confirmed 2026-09-08. A useful
+  negative result: the encoding family is not uniformly mishandled, and the
+  invalid-UTF-8 divergence is specific to bytes that are genuinely not UTF-8
+  rather than to unusual code points in general.

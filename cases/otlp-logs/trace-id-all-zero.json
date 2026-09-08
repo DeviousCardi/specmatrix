@@ -1,0 +1,44 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "specmatrix"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "specmatrix"
+          },
+          "logRecords": [
+            {
+              "timeUnixNano": "{{ now_ns }}",
+              "observedTimeUnixNano": "{{ now_ns }}",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "body": {
+                "stringValue": "specmatrix zero trace id"
+              },
+              "attributes": [
+                {
+                  "key": "specmatrix.run",
+                  "value": {
+                    "stringValue": "{{ run_key }}"
+                  }
+                }
+              ],
+              "traceId": "00000000000000000000000000000000",
+              "spanId": "0000000000000000"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

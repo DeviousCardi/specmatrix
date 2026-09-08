@@ -17,6 +17,15 @@
 # query below selects on service_name — a label Loki does derive from
 # service.name — and then filters by run key.
 #
+# The stream selector matches any service_name rather than naming ours, and
+# that is not a stylistic choice. Loki labels a record with no service.name
+# resource attribute as service_name="unknown_service", so a selector naming
+# `specmatrix` cannot see the resource-without-attributes case at all — it
+# reported "accepted but never became queryable", an ALTER, against a store
+# that had stored the record correctly. The control did not catch it, because
+# the control does carry a service name; only a case that deliberately omits
+# one exposes it.
+#
 # The query is passed as a parameter rather than written into the path. A LogQL
 # selector carries braces, quotes and a pipe, and pasting one into a URL is
 # refused with 400 before Loki sees it.
@@ -49,7 +58,7 @@ protocols:
     readback:
       request: GET /loki/api/v1/query_range
       params:
-        query: '{service_name="specmatrix"}|specmatrix_run="{{ run_key }}"'
+        query: '{service_name=~".+"}|specmatrix_run="{{ run_key }}"'
         start: "{{ window_start_ns }}"
         end: "{{ window_end_ns }}"
         limit: "10"

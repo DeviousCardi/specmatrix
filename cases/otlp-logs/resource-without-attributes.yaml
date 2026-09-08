@@ -1,0 +1,40 @@
+id: otlp-logs/resource-without-attributes
+protocol: otlp-logs
+title: A resource carrying no attributes is accepted and the record survives
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/resource/v1
+  section: Resource.attributes
+  text: >
+    Resource.attributes is a repeated KeyValue and may be empty; proto3 JSON
+    omits a repeated field holding its default value, so a Resource with no
+    attributes is serialised as an empty object. Nothing in the specification
+    requires a resource to carry attributes, and a receiver that requires one —
+    service.name in particular — rejects or mangles conformant traffic from any
+    exporter that has not been given a service name.
+
+send:
+  format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
+  body: cases/otlp-logs/resource-without-attributes.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [body]
+notes: >
+  All five stores PASS, confirmed 2026-09-08 against Parseable v2.9.4,
+  OpenObserve v0.92.2, Quickwit 0.8.2, VictoriaLogs v1.52.0 and Loki 3.1.1.
+
+  The case earned its place by breaking an adapter rather than a backend. Loki
+  labels a record carrying no service.name as service_name="unknown_service",
+  and this adapter's read-back selector named `specmatrix`, so the record was
+  stored correctly and could not be found — reported as "accepted but never
+  became queryable", an ALTER against a store that had done nothing wrong. The
+  selector now matches any service_name.
+
+  The control did not catch it and could not have: minimal-record carries a
+  service name. Only a case that deliberately omits one exposes an adapter that
+  assumes it.
