@@ -41,6 +41,10 @@ pub struct CheckResult {
 pub struct Outcome {
     pub backend: String,
     pub backend_version: Option<String>,
+    /// The image the adapter pins. Recorded beside the reported version
+    /// because the two can disagree, and a reader needs to know which build a
+    /// column actually describes.
+    pub backend_image: Option<String>,
     pub suite: String,
     pub url: String,
     pub results: Vec<CheckResult>,
@@ -128,6 +132,7 @@ impl Runner {
         Outcome {
             backend: self.backend.name.clone(),
             backend_version,
+            backend_image: self.backend.image(),
             suite: suite.to_string(),
             url: self.base_url.clone(),
             results,
