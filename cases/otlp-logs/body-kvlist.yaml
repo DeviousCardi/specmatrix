@@ -13,6 +13,9 @@ rule:
     leaves, has changed the shape of what was sent, and a query written against
     the structure will not find it.
 
+  observed:
+    - https://github.com/VictoriaMetrics/VictoriaMetrics/issues/11525
+
 send:
   format: otlp-json
   encodings: [otlp-json, otlp-protobuf]
