@@ -8,11 +8,13 @@
 #   - attribute keys are flattened with `.` replaced by `_`, so the run key is
 #     stored as `specmatrix_run`
 #
-# ZO_INGEST_ALLOWED_UPTO is widened because corpus payloads carry fixed
-# historical timestamps. At the default of 5 hours OpenObserve answers 200 and
-# discards the record, which the runner would correctly report as an ALTER —
-# but that would be an artefact of the fixture rather than a fact about the
-# backend. The accept-then-discard behaviour itself is worth a case of its own.
+# Corpus payloads carry generated instants rather than fixed historical ones as
+# of 0.2, so the checks run against OpenObserve's default ingest window. The
+# 0.1 adapter widened ZO_INGEST_ALLOWED_UPTO to 87600 hours because the fixture
+# was dated 2025; at the default of 5 hours OpenObserve answers 200 and
+# discards the record. That behaviour is the failure class this project exists
+# to surface, so it gets a case of its own rather than a setting that hides it:
+# cases/otlp-logs/timestamp-outside-ingest-window.yaml.
 
 name: openobserve
 version_from:
@@ -27,7 +29,6 @@ container:
     # Must satisfy OpenObserve's password policy: 8-128 characters with an
     # upper, a lower, a digit and a symbol, or the process exits at start-up.
     ZO_ROOT_USER_PASSWORD: "Specmatrix#2026"
-    ZO_INGEST_ALLOWED_UPTO: "87600"
   ready:
     request: GET /healthz
     expect_status: 200

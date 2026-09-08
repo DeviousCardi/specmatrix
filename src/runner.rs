@@ -278,20 +278,12 @@ impl Runner {
             "specmatrix_{}",
             case.id.replace(['/', '-', '.'], "_").to_lowercase()
         );
-        let now = chrono::Utc::now();
         let mut vars = Vars::new();
         vars.insert("run_key", run_key);
         vars.insert("suite_stream", stream);
-        vars.insert("window_start", (now - chrono::Duration::minutes(5)).to_rfc3339());
-        vars.insert("window_end", (now + chrono::Duration::minutes(5)).to_rfc3339());
-        // Some stores take the search window as microseconds since the epoch
-        // rather than RFC 3339. The window is wide because a corpus payload may
-        // carry a fixed historical timestamp, and the record is found by its run
-        // key rather than by when it claims to have happened.
-        let start_us = (now - chrono::Duration::days(730)).timestamp_micros();
-        let end_us = (now + chrono::Duration::days(1)).timestamp_micros();
-        vars.insert("window_start_us", start_us.to_string());
-        vars.insert("window_end_us", end_us.to_string());
+        for (key, value) in time_vars(chrono::Utc::now()) {
+            vars.insert(key, value);
+        }
         vars
     }
 
@@ -409,6 +401,44 @@ impl Runner {
         };
         Ok(found.and_then(|v| v.as_str()).map(str::to_string))
     }
+}
+
+/// Time-derived template variables, as a free function so they can be tested
+/// without a Runner, a Backend or a network.
+///
+/// Payload timestamps are generated rather than fixed. A corpus carrying a
+/// fixed instant ages out of a store's ingest window, and then a check measures
+/// the fixture rather than the backend — which is what the 0.1 OpenObserve
+/// adapter had to widen `ZO_INGEST_ALLOWED_UPTO` to work around.
+fn time_vars(now: chrono::DateTime<chrono::Utc>) -> Vec<(&'static str, String)> {
+    let nanos = now.timestamp_nanos_opt().unwrap_or_default() as i128;
+    let day: i128 = 86_400_000_000_000;
+    // Truncated to the second, then a fixed sub-second remainder. A live
+    // nanosecond clock is non-deterministic in exactly the way a precision
+    // check cannot tolerate: land on a whole millisecond and the check reports
+    // no precision loss, which reads as a store that kept nanoseconds. These
+    // low digits are known, so the check can say which of them a store dropped.
+    let fractional = now.timestamp() as i128 * 1_000_000_000 + 123_456_789;
+    // The search window is wide because the record is found by its run key
+    // rather than by when it claims to have happened, and one case deliberately
+    // sends an instant a month old.
+    let start_us = (now - chrono::Duration::days(730)).timestamp_micros();
+    let end_us = (now + chrono::Duration::days(1)).timestamp_micros();
+    vec![
+        ("window_start", (now - chrono::Duration::minutes(5)).to_rfc3339()),
+        ("window_end", (now + chrono::Duration::minutes(5)).to_rfc3339()),
+        // Some stores take the search window as microseconds since the epoch
+        // rather than RFC 3339.
+        ("window_start_us", start_us.to_string()),
+        ("window_end_us", end_us.to_string()),
+        ("now_ns", nanos.to_string()),
+        ("now_ns_fractional", fractional.to_string()),
+        ("now_us", now.timestamp_micros().to_string()),
+        ("now_ms", now.timestamp_millis().to_string()),
+        ("now_s", now.timestamp().to_string()),
+        ("now_minus_1d_ns", (nanos - day).to_string()),
+        ("now_minus_30d_ns", (nanos - 30 * day).to_string()),
+    ]
 }
 
 /// Pulls this run's record out of a read-back response.
@@ -557,5 +587,54 @@ expect:
     fn first_record_rejects_an_error_object() {
         let response = json!({"error": "index not found"});
         assert!(first_record(&response, "", "sm-new").is_none());
+    }
+
+    /// A payload carrying a fixed historical instant ages out of a store's
+    /// ingest window, and then the check is testing the fixture rather than the
+    /// backend. These are generated per run.
+    #[test]
+    fn now_ns_is_close_to_now() {
+        let now = chrono::Utc::now();
+        let vars: std::collections::HashMap<_, _> = time_vars(now).into_iter().collect();
+        let sent: i128 = vars["now_ns"].parse().expect("an integer");
+        let actual = now.timestamp_nanos_opt().unwrap() as i128;
+        assert!((sent - actual).abs() < 1_000_000_000, "sent {sent}, now {actual}");
+    }
+
+    /// A live nanosecond clock is non-deterministic in exactly the way the
+    /// precision check cannot tolerate: land on a whole millisecond and it
+    /// reports no precision loss, which reads as a store that kept nanoseconds.
+    /// Truncate to the second, then add a fixed remainder.
+    #[test]
+    fn now_ns_fractional_carries_known_low_digits() {
+        let now = chrono::Utc::now();
+        let vars: std::collections::HashMap<_, _> = time_vars(now).into_iter().collect();
+        let value = &vars["now_ns_fractional"];
+        assert!(value.ends_with("123456789"), "got {value}");
+        let seconds: i64 = value[..value.len() - 9].parse().expect("an integer");
+        assert_eq!(seconds, now.timestamp());
+    }
+
+    #[test]
+    fn microseconds_and_milliseconds_are_offered() {
+        let now = chrono::Utc::now();
+        let vars: std::collections::HashMap<_, _> = time_vars(now).into_iter().collect();
+        assert_eq!(vars["now_ms"], now.timestamp_millis().to_string());
+        assert_eq!(vars["now_us"], now.timestamp_micros().to_string());
+        assert_eq!(vars["now_s"], now.timestamp().to_string());
+    }
+
+    /// Deliberately outside a default ingest window, for the case that measures
+    /// what a store does with data it will not keep.
+    #[test]
+    fn the_backdated_variables_are_the_ages_they_claim() {
+        let now = chrono::Utc::now();
+        let vars: std::collections::HashMap<_, _> = time_vars(now).into_iter().collect();
+        let day: i128 = 86_400_000_000_000;
+        let reference = now.timestamp_nanos_opt().unwrap() as i128;
+        let one: i128 = vars["now_minus_1d_ns"].parse().expect("an integer");
+        let thirty: i128 = vars["now_minus_30d_ns"].parse().expect("an integer");
+        assert_eq!((reference - one) / day, 1);
+        assert_eq!((reference - thirty) / day, 30);
     }
 }

@@ -11,7 +11,7 @@
           "scope": { "name": "specmatrix" },
           "logRecords": [
             {
-              "timeUnixNano": "1755000000000000000",
+              "timeUnixNano": "{{ now_ns }}",
               "severityNumber": 9,
               "severityText": "INFO",
               "body": { "stringValue": "no schema url anywhere" },
