@@ -1,0 +1,53 @@
+id: es-bulk/text-vs-keyword-term
+protocol: es-bulk
+title: A term query on a text field matches its analyzed tokens
+
+rule:
+  basis: de-facto
+  spec: elasticsearch/mapping
+  section: text-vs-keyword
+  text: >
+    Elasticsearch defines this protocol. Dynamic mapping makes a string field
+    `text` with a `keyword` subfield: the text form is analyzed, so a term
+    query for "error" matches a document whose value is "Error Occurred",
+    because "error" is one of its tokens. The keyword subfield is not analyzed
+    and matches only the exact value. A backend that maps strings as exact
+    values returns fewer documents for the same query and raises no error,
+    which is the divergence — and it is also why the other query cases in this
+    suite filter on a numeric field, so that this behaviour cannot be mistaken
+    for a difference in their semantics.
+
+send:
+  format: es-ndjson
+  body: cases/es-bulk/text-and-sort.ndjson
+
+expect:
+  ingest: accepted
+  query:
+    body: cases/es-bulk/text-vs-keyword-term.query.json
+    returns: [lower, mixed, norank]
+
+notes: >
+  Copied from Elasticsearch 8.15.0 on 2026-09-08: [lower, mixed, norank]. The
+  same query on level.keyword returns [lower, norank], which is the answer a
+  store that does not analyze text would give.
+
+  Quickwit 0.8.2: ALTER, "missing: mixed". It returns [lower, norank] where
+  Elasticsearch returns [lower, mixed, norank]. Confirmed by hand on
+  2026-09-08, along with the mechanism: Quickwit's dynamic mapping declares
+  tokenizer "raw", so a string field is not analyzed and "error" does not match
+  "Error Occurred".
+
+  The second half is sharper than this check asserts and is worth recording
+  here. A term query on `level.keyword` — the idiom every Elasticsearch
+  dashboard uses for exact matching and aggregation — returns [] on Quickwit,
+  because dynamic mapping creates no keyword subfield at all. So a query
+  written against Elasticsearch either returns fewer rows or none, and raises
+  no error in either case.
+
+  The adapter leaves the mapping at Quickwit's default, as it does for
+  index_field_presence. A different tokenizer can be configured; the default is
+  what a user gets, and configuring one until the check passed would be the
+  corpus arranging its own result.
+
+  OpenObserve v0.92.2: N/A, no Elasticsearch query endpoint to ask.

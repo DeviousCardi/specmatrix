@@ -1,0 +1,6 @@
+{"index":{"_index":"{{ suite_stream }}"}}
+{"doc":"lower","level":"error","rank":2,"specmatrix.run":"{{ run_key }}"}
+{"index":{"_index":"{{ suite_stream }}"}}
+{"doc":"mixed","level":"Error Occurred","rank":1,"specmatrix.run":"{{ run_key }}"}
+{"index":{"_index":"{{ suite_stream }}"}}
+{"doc":"norank","level":"error","specmatrix.run":"{{ run_key }}"}

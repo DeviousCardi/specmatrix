@@ -1,0 +1,42 @@
+id: es-bulk/sort-missing-first
+protocol: es-bulk
+title: An explicit missing:_first moves absent documents to the front
+
+rule:
+  basis: de-facto
+  spec: elasticsearch/sort
+  section: missing-values
+  text: >
+    The sort option `missing` states where documents lacking the sort field are
+    placed, and `_first` puts them ahead of every document that has it.
+    Together with the default this pins both halves of the behaviour: a backend
+    that ignores the option, or that has no notion of a missing sort value,
+    returns the same order for both queries and reports no error.
+
+send:
+  format: es-ndjson
+  body: cases/es-bulk/text-and-sort.ndjson
+
+expect:
+  ingest: accepted
+  query:
+    body: cases/es-bulk/sort-missing-first.query.json
+    returns: [norank, mixed, lower]
+    order: as-listed
+
+notes: >
+  Copied from Elasticsearch 8.15.0 on 2026-09-08: [norank, mixed, lower].
+
+  Quickwit 0.8.2: ALTER. Expected [norank, mixed, lower], got
+  [mixed, lower, norank] — the same order it returns for the default sort, so
+  the `missing` option is silently ignored. Confirmed by hand on 2026-09-08 by
+  running both sorts against one index and getting identical answers.
+
+  This is the pair working as intended. sort-missing-last passes on Quickwit
+  and sort-missing-first does not, and only having both makes the finding
+  precise: the store agrees about where absent documents go by default and does
+  not implement the option that moves them. A dashboard that pages through a
+  sort with missing:_first shows a different first page on each store, with
+  nothing to indicate why.
+
+  OpenObserve v0.92.2: N/A, no Elasticsearch query endpoint to ask.

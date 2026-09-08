@@ -1,0 +1,38 @@
+id: es-bulk/sort-missing-last
+protocol: es-bulk
+title: Sorting ascending puts documents missing the sort field last
+
+rule:
+  basis: de-facto
+  spec: elasticsearch/sort
+  section: missing-values
+  text: >
+    Elasticsearch is the reference for this protocol. A document that does not
+    carry the sort field is placed last on an ascending sort, its implicit
+    position being the maximum. Where such documents land changes which rows a
+    paged query returns, so a backend that places them first, or drops them,
+    silently changes the first page of every dashboard built on that sort.
+  observed:
+    - docs/TEST-CASES.md, absent-field query semantics
+
+send:
+  format: es-ndjson
+  body: cases/es-bulk/text-and-sort.ndjson
+
+expect:
+  ingest: accepted
+  query:
+    body: cases/es-bulk/sort-missing-last.query.json
+    returns: [mixed, lower, norank]
+    order: as-listed
+
+notes: >
+  Copied from Elasticsearch 8.15.0 on 2026-09-08: [mixed, lower, norank], where
+  norank is the document with no rank field. This is the only case in the
+  corpus asserting an order rather than a set, because here the order is the
+  behaviour under test.
+
+  Quickwit 0.8.2: PASS, [mixed, lower, norank], the same order as
+  Elasticsearch. Confirmed by hand.
+
+  OpenObserve v0.92.2: N/A, no Elasticsearch query endpoint to ask.

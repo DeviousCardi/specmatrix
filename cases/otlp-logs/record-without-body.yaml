@@ -1,0 +1,51 @@
+id: otlp-logs/record-without-body
+protocol: otlp-logs
+title: A log record carrying no body is accepted
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/logs/v1
+  section: LogRecord.body
+  text: >
+    LogRecord.body is an optional AnyValue, and proto3 JSON omits a field that
+    is not set, so a record with no body is emitted with no body key at all.
+    Records like this are ordinary: an event fully described by its attributes
+    and severity needs no message. A receiver that requires a body rejects
+    conformant traffic, and one that invents a body has put its own text where
+    a reader will take it for the event's.
+
+send:
+  format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
+  body: cases/otlp-logs/record-without-body.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [body, severityText]
+
+notes: >
+  Reported rather than asserted, because a store has no obvious right answer
+  for the message column of a record with no message. What would be a finding
+  is a store that fills it with something a reader would take for the event's
+  own text.
+
+  Five stores, three behaviours, confirmed 2026-09-08:
+
+    Parseable v2.9.4     <absent>
+    OpenObserve v0.92.2  <absent>
+    Quickwit 0.8.2       <absent>
+    Loki 3.1.1           ""
+    VictoriaLogs v1.52.0 "missing _msg field; see
+                          https://docs.victoriametrics.com/victorialogs/keyconcepts/#message-field"
+
+  Three stores leave the field absent and Loki stores an empty string; all four
+  are faithful readings of a record that carried no message.
+
+  VictoriaLogs writes a sentence about its own data model, and a documentation
+  URL, into the field that holds the log line. It is the second case to catch
+  it doing this — body-kvlist produces the same string — so it is a consistent
+  substitution rather than an accident of one payload. Nothing errors at
+  ingest, and a dashboard renders the notice as though the application had
+  logged it.

@@ -1,0 +1,6 @@
+{
+  "query": {
+    "bool": { "filter": [ { "term": { "{{ run_key_field }}": "{{ run_key }}" } } ] }
+  },
+  "sort": [ { "rank": { "order": "asc", "missing": "_first" } } ]
+}
