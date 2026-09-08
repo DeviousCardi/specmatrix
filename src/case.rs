@@ -15,11 +15,19 @@ pub struct Case {
     /// anything about the backend.
     #[serde(default)]
     pub control: bool,
+    /// The clause, divergence or filed bug this check exists for. Read by
+    /// people rather than by the runner: a check that cannot cite why it
+    /// exists does not go in, and the citation is what makes a result
+    /// defensible when a maintainer disputes it.
     #[serde(default)]
+    #[allow(dead_code)]
     pub rule: serde_json::Value,
     pub send: Send,
     pub expect: Expect,
+    /// Verdicts recorded verbatim, with versions. Also read by people; this is
+    /// where a finding lives between being observed and being filed upstream.
     #[serde(default)]
+    #[allow(dead_code)]
     pub notes: String,
     /// Set by the loader: directory the case file lives in.
     #[serde(skip)]
@@ -39,6 +47,11 @@ pub struct Send {
     /// Payload path, relative to the repository root. Sent byte-for-byte after
     /// `{{ run_key }}` substitution.
     pub body: PathBuf,
+    /// Declared by the remote-write case written in 0.1 and not read: since
+    /// 0.2 the encoder owns compression, because a case that declares one the
+    /// encoder also applies would apply it twice. Kept until 0.3 rewrites that
+    /// case, so the file on disk stays parseable.
+    #[allow(dead_code)]
     pub compression: Option<String>,
 }
 
@@ -98,6 +111,9 @@ pub struct ReadbackExpect {
     pub on: Vec<FieldSpec>,
     /// Which series a check asserts on, by name. Protocols that send several
     /// series in one request need it; a check usually asserts on one of them.
+    /// Read by the remote-write read-back in 0.3; declared now because the
+    /// case that needs it is already in the corpus.
+    #[allow(dead_code)]
     pub series: Option<String>,
 }
 
