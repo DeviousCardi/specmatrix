@@ -197,7 +197,23 @@ impl Runner {
         // back. Sent before rather than after: a run that crashes leaves state,
         // and an "after" teardown is precisely the one that did not run.
         if let Some(teardown) = self.backend.teardown.as_ref() {
-            let _ = self.send(teardown, &vars, Vec::new());
+            let _ = self.send_declared(teardown, &vars);
+        }
+        // Then recreate whatever the store needs before it will accept a write.
+        // A store that will not create an index on write has to be given one,
+        // and the shape of that index belongs to the adapter: putting it in the
+        // corpus would make a shared case carry one backend's schema.
+        if let Some(setup) = self.backend.setup.as_ref() {
+            let response = self.send_declared(setup, &vars)?;
+            if !(200..300).contains(&response.status) && response.status != 400 {
+                // 400 is tolerated because several stores answer it for "already
+                // exists", which is not a failure to set up.
+                return Ok(self.result(
+                    case,
+                    Verdict::NotApplicable,
+                    format!("setup failed: {} {}", response.status, first_line(&response.text())),
+                ));
+            }
         }
 
         let response = self.send(&protocol.ingest, &vars, body)?;
@@ -446,8 +462,15 @@ impl Runner {
                 if let Ok(value) = serde_json::from_slice::<Value>(&response.body) {
                     let rows =
                         crate::query::returned_markers(&value, &query.records, &marker_pointer);
-                    // Two identical reads in a row means the index has settled.
-                    if last.as_deref() == Some(rows.as_slice()) {
+                    // Two identical non-empty reads mean the index has settled.
+                    //
+                    // Non-empty matters. An empty result is also stable, and
+                    // treating it as settled returned nothing after two polls
+                    // against a store whose commit timeout is 60s — which reads
+                    // as every row missing, an ALTER, and a false finding of
+                    // silent data loss. A check that genuinely expects no rows
+                    // therefore waits out the timeout, which is slow and right.
+                    if !rows.is_empty() && last.as_deref() == Some(rows.as_slice()) {
                         return Ok(rows);
                     }
                     last = Some(rows);
@@ -457,6 +480,18 @@ impl Runner {
                 return Ok(last.unwrap_or_default());
             }
             std::thread::sleep(Duration::from_millis(query.poll.interval_ms));
+        }
+    }
+
+    /// Sends a request that carries its own body in the adapter, such as setup
+    /// or teardown, rather than a payload from a case.
+    fn send_declared(&self, req: &Request, vars: &Vars) -> Result<Response> {
+        match req.body.as_ref() {
+            Some(body) => {
+                let rendered = template::render_json(body, vars);
+                self.send_json(req, vars, &rendered)
+            }
+            None => self.send(req, vars, Vec::new()),
         }
     }
 

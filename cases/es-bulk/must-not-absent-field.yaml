@@ -37,3 +37,13 @@ notes: >
   reasons that have nothing to do with must_not — and a backend failing for
   that reason would look like it failed this check. That behaviour is worth
   isolating in a case of its own rather than confounding this one.
+
+  Quickwit 0.8.2: PASS, confirmed 2026-09-08. It returns
+  [field-absent, field-null, with-field-other], the same set as Elasticsearch
+  8.15.0.
+
+  quickwit#6474 does not reproduce on 0.8.2 with a dynamically mapped index.
+  docs/TEST-CASES.md listed it as reported and not confirmed here; it has now
+  been checked and is recorded as not reproducible on this version, which is a
+  result rather than an absence of one. The case stays, because the behaviour
+  is worth asserting continuously rather than once.

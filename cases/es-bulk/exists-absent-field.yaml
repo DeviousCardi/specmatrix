@@ -32,3 +32,14 @@ notes: >
   [with-field-match, with-field-other]. Both the absent and the null document
   are excluded, which is the answer that makes null and absent equivalent here
   while must_not treats them the same as each other but opposite to this.
+
+  Quickwit 0.8.2: PASS, confirmed 2026-09-08. It returns
+  [with-field-match, with-field-other], the same set as Elasticsearch 8.15.0.
+
+  This is the more surprising of the two. quickwit#6475 concerns exists queries
+  returning nothing when field-presence indexing is off, and Quickwit's dynamic
+  default really is index_field_presence: false — confirmed in the index config
+  the adapter's setup request creates. The exists query still answers
+  correctly, so whatever the reported failure depends on, it is not that
+  default alone on this version. The adapter deliberately leaves the setting at
+  its default: turning it on would tune the backend until the check passed.

@@ -27,3 +27,9 @@ notes: >
   Elasticsearch 8.15.0: PASS, 200, round trip intact, confirmed 2026-09-08.
   This is the reference column for es-bulk, so a failure here would mean the
   adapter is wrong rather than the backend.
+
+  Quickwit 0.8.2: PASS, round trip intact, confirmed 2026-09-08. Its adapter
+  needs a setup request because Quickwit will not create an index on write —
+  `_bulk` against a missing index answers 404 — and a 90s poll, because a newly
+  created index defaults to commit_timeout_secs: 60 and documents become
+  searchable at about 65s.

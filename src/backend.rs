@@ -25,6 +25,10 @@ pub struct Backend {
     pub run_key_field: Option<String>,
     #[serde(default)]
     pub normalise: Normalise,
+    /// A request sent before each case's ingest, after teardown. Some stores
+    /// will not create an index on write and must be given one; the shape of
+    /// that index is part of the adapter, not of the corpus.
+    pub setup: Option<Request>,
     pub teardown: Option<Request>,
 }
 

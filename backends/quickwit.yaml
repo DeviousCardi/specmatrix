@@ -64,6 +64,22 @@ container:
 auth:
   kind: none
 
+# Quickwit's dynamic mapping indexes the run key raw, so no `.keyword`
+# subfield is needed. Elasticsearch needs one; that difference is why cases
+# write `{{ run_key_field }}` rather than either spelling.
+run_key_field: specmatrix.run
+
+setup:
+  request: POST /api/v1/indexes
+  body:
+    version: "0.8"
+    index_id: "{{ suite_stream }}"
+    doc_mapping:
+      mode: dynamic
+
+teardown:
+  request: DELETE /api/v1/indexes/{{ suite_stream }}
+
 protocols:
   otlp-logs:
     formats: [otlp-protobuf]
@@ -84,3 +100,50 @@ protocols:
       poll:
         interval_ms: 1000
         timeout_ms: 30000
+
+  # Quickwit also claims the Elasticsearch API. Confirmed by hand on
+  # 2026-09-08: it will not create an index on write, so `_bulk` against a
+  # missing index answers 404 `index ... not found`. The setup request below
+  # creates one, and the mapping is left at Quickwit's dynamic default —
+  # including index_field_presence: false, which is what quickwit#6475 is
+  # about. Turning that on would tune the backend until the check passed, which
+  # is the failure mode docs/DESIGN.md warns about; the default is what a user
+  # gets, so the default is what is measured.
+  #
+  # A term query on the run key needs no `.keyword` subfield here, unlike
+  # Elasticsearch: Quickwit's dynamic mapping indexes it raw.
+  #
+  # The poll timeouts below are 90s because a newly created index defaults to
+  # commit_timeout_secs: 60, so documents become searchable at about 65s.
+  # Confirmed by hand rather than assumed — at the 30s the other adapters use,
+  # every check read as "accepted but never became queryable", which is an
+  # ALTER and would have been a false finding of silent data loss. The fix is
+  # to wait longer, not to lower the store's commit timeout: waiting changes
+  # nothing about what Quickwit does, and tuning it would be the corpus
+  # arranging its own result.
+  es-bulk:
+    formats: [es-ndjson]
+    ingest:
+      request: POST /api/v1/_elastic/{{ suite_stream }}/_bulk
+      headers:
+        Content-Type: application/x-ndjson
+    readback:
+      request: POST /api/v1/_elastic/{{ suite_stream }}/_search
+      body:
+        query:
+          term:
+            specmatrix.run: "{{ run_key }}"
+      records: /hits/hits
+      fields:
+        message: /_source/message
+        level: /_source/level
+      poll:
+        interval_ms: 1000
+        timeout_ms: 90000
+    query:
+      request: POST /api/v1/_elastic/{{ suite_stream }}/_search
+      records: /hits/hits
+      marker_pointer: /_source
+      poll:
+        interval_ms: 1000
+        timeout_ms: 90000
