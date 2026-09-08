@@ -1,0 +1,33 @@
+id: otlp-logs/severity-number-unspecified
+protocol: otlp-logs
+title: A record carrying no severity is accepted
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/logs/v1
+  section: SeverityNumber
+  text: >
+    SEVERITY_NUMBER_UNSPECIFIED is 0 and is the default, and proto3 JSON omits
+    a field holding its default value, so a record with no severity is emitted
+    with no severityNumber key at all. Severity is optional: a log record
+    carrying none is ordinary traffic rather than malformed input, and a
+    receiver that requires one rejects conformant exports.
+
+send:
+  format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
+  body: cases/otlp-logs/severity-number-unspecified.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [body]
+
+notes: >
+  Asserted on the body rather than on the severity. What a store puts in its
+  own severity column for an unspecified severity is its business; that the
+  record survives at all is the check.
+
+  All five stores PASS, confirmed 2026-09-08. Severity is optional and no
+  store requires it.

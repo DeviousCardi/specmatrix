@@ -1,0 +1,50 @@
+id: otlp-logs/body-kvlist
+protocol: otlp-logs
+title: A structured body survives as a structure
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/common/v1
+  section: AnyValue.kvlist_value
+  text: >
+    LogRecord.body is an AnyValue, and an AnyValue may hold a kvlist_value
+    whose values are themselves AnyValue, so a body may be an arbitrarily
+    nested structure. A store that flattens it to a string, or keeps only the
+    leaves, has changed the shape of what was sent, and a query written against
+    the structure will not find it.
+
+send:
+  format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
+  body: cases/otlp-logs/body-kvlist.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [body]
+
+notes: >
+  Recorded rather than asserted, because stores legitimately differ in how they
+  render a structure into their own document shape and the specification does
+  not say which rendering is correct. What the check makes visible is whether
+  the structure survives at all.
+
+  Five stores, four answers, confirmed 2026-09-08. None is wrong under the
+  rule, and together they are why this check reports rather than judges:
+
+    Parseable v2.9.4     body column absent
+    OpenObserve v0.92.2  body column absent
+    Quickwit 0.8.2       body column absent
+    Loki 3.1.1           "{\"nested\":{\"inner\":42},\"outer\":\"one\"}"
+    VictoriaLogs v1.52.0 "missing _msg field; see
+                          https://docs.victoriametrics.com/victorialogs/keyconcepts/#message-field"
+
+  Loki alone keeps the structure in a form a query could reach, as JSON text.
+  Three store the record with nothing under the body column the adapter maps,
+  so a structured body is not retrievable as a body.
+
+  VictoriaLogs is the one worth reading twice. It does not store the body and
+  does not refuse the record: it stores a diagnostic string about its own data
+  model in the field where the log message belongs. A dashboard renders that as
+  the log line, and nothing errored at ingest.

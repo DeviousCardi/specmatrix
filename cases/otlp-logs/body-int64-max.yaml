@@ -1,0 +1,53 @@
+id: otlp-logs/body-int64-max
+protocol: otlp-logs
+title: An int64 body at the maximum survives without losing precision
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.0
+  section: json-mapping
+  text: >
+    The proto3 JSON mapping encodes int64 as a decimal string, precisely so
+    that values past the range a JSON number preserves exactly — anything
+    beyond 2^53 — survive the encoding. 9223372036854775807 is int64 max and
+    has no exact IEEE-754 double representation. A store that parses it as a
+    float returns 9223372036854775808, one greater than the value that was
+    sent, and reports no error in doing so.
+
+send:
+  format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
+  body: cases/otlp-logs/body-int64-max.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on:
+      - field: body
+        as: integer
+
+notes: >
+  Four stores PASS. Quickwit 0.8.2 is an ALTER, and the most serious finding
+  in this suite: the record is accepted and silently discarded while the store
+  affirmatively reports that nothing was rejected. Confirmed by hand on
+  2026-09-08:
+
+    $ curl -X POST localhost:7280/api/v1/otlp/v1/logs \
+        -H 'Content-Type: application/x-protobuf' --data-binary @body-int64-max.pb
+    HTTP/1.1 200 OK
+    { "partial_success": { "rejected_log_records": 0, "error_message": "" } }
+
+    $ curl 'localhost:7280/api/v1/otel-logs-v0_7/search?query=attributes.specmatrix.run:probe-qw-i64'
+    num_hits: 0
+
+  A same-moment control rules out an unhealthy index or a slow commit: a record
+  with a string body, sent seconds later to the same index, is retrievable
+  while the int64 one is not.
+
+  This is worse than the other accept-then-discard cases in the corpus.
+  VictoriaLogs answers 200 with an empty body; OpenObserve reports its discard
+  through partial_success in an encoding the client cannot read. Quickwit fills
+  partial_success in and states that zero records were rejected. A client doing
+  everything right — reading the response, parsing partial_success, checking
+  the count — is told the write succeeded completely.

@@ -1,0 +1,33 @@
+id: otlp-logs/body-very-long-token
+protocol: otlp-logs
+title: A body of one very long token is not silently truncated
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/common/v1
+  section: AnyValue.string_value
+  text: >
+    Neither the OTLP specification nor the protobuf encoding places a length
+    limit on a string field, so a hundred-thousand-character body is
+    conformant. A store may refuse it, which is a limit loudly applied and the
+    caller learns of it. Accepting it and storing a prefix is an alteration:
+    the record looks complete and is not.
+  observed:
+    - docs/TEST-CASES.md, encoding category
+
+send:
+  format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
+  body: cases/otlp-logs/body-very-long-token.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: exact
+    on: [body]
+
+notes: >
+  All five stores PASS with the full hundred thousand characters, confirmed
+  2026-09-08. None truncated and none refused, so the check records agreement.
+  It stays because the failure it looks for is silent, and a length limit is
+  the kind of thing a store adds in a minor release.

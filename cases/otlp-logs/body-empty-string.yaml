@@ -1,0 +1,34 @@
+id: otlp-logs/body-empty-string
+protocol: otlp-logs
+title: A body set to the empty string is stored as an empty string
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/common/v1
+  section: AnyValue.string_value
+  text: >
+    An AnyValue with string_value set to "" is a present value that happens to
+    be empty, which is not the same as a LogRecord carrying no body at all. A
+    store that turns an empty body into a null, or drops the record for having
+    nothing to say, has changed what was sent.
+
+send:
+  format: otlp-json
+  encodings: [otlp-json, otlp-protobuf]
+  body: cases/otlp-logs/body-empty-string.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [body]
+
+notes: >
+  Reported rather than asserted. Proto3 JSON omits a field holding its default
+  value, so an empty string and an absent one are hard to tell apart once
+  encoded, and a store returning absent here may be faithfully round-tripping
+  what the wire carried. The ambiguity is in the encoding rather than in any
+  store, which is why this records what each one does instead of ruling.
+
+  All five stores return the empty string they were given, confirmed
+  2026-09-08. The answer turned out to be unanimous.
