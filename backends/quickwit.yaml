@@ -1,0 +1,42 @@
+# Adapter for Quickwit.
+#
+# Confirmed by hand against quickwit 0.8.2 on 2026-09-08: the OTLP endpoint
+# accepts application/x-protobuf only. JSON is refused at the Content-Type
+# header before the body is read:
+#
+#   $ curl -X POST localhost:7280/api/v1/otlp/v1/logs \
+#       -H 'Content-Type: application/json' --data-binary @minimal-record.json
+#   {"message": "Invalid request header \"content-type\""}
+#
+# The OTLP specification makes JSON a SHOULD rather than a MUST, so this is a
+# deviation from a recommendation and not a conformance failure. Read-back is
+# deliberately absent until the runner can send protobuf; declaring a query it
+# has never exercised would be a guess committed as fact.
+#
+# quickwit/quickwit:latest also resolved to 0.8.2 on that date.
+
+name: quickwit
+version_from:
+  request: GET /api/v1/version
+  field: /build/cargo_pkg_version
+
+container:
+  image: quickwit/quickwit:0.8.2
+  command: ["run"]
+  port: 7280
+  env:
+    QW_ENABLE_OTLP_ENDPOINT: "true"
+  ready:
+    request: GET /health/livez
+    expect_status: 200
+
+auth:
+  kind: none
+
+protocols:
+  otlp-logs:
+    formats: [otlp-protobuf]
+    ingest:
+      request: POST /api/v1/otlp/v1/logs
+      headers:
+        Content-Type: application/x-protobuf

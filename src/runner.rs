@@ -21,6 +21,10 @@ pub enum Verdict {
     Reject,
     /// Accepted, then absent or different when read back.
     Alter,
+    /// The backend could not be asked. Not a verdict about the backend, and
+    /// never counted towards a pass or a failure.
+    #[serde(rename = "n/a")]
+    NotApplicable,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,26 +69,68 @@ impl Runner {
     pub fn run_suite(&self, suite: &str, cases: &[Case]) -> Outcome {
         let backend_version = self.backend_version().ok().flatten();
         let mut results = Vec::new();
-        for case in cases {
-            let result = match self.run_case(suite, case) {
-                Ok(r) => r,
-                // A harness failure is not a backend verdict. Say so plainly
-                // rather than reporting it as a divergence.
-                Err(e) => CheckResult {
-                    id: case.id.clone(),
-                    title: case.title.clone(),
-                    verdict: Verdict::Alter,
-                    detail: format!("harness error: {e:#}"),
-                },
-            };
+
+        // Controls run first. If one does not pass, the rest of the suite
+        // cannot say anything about the backend, and running it anyway would
+        // print one fact several times over.
+        let (controls, rest): (Vec<&Case>, Vec<&Case>) =
+            cases.iter().partition(|case| case.control);
+
+        let mut blocked: Option<String> = None;
+        for case in &controls {
+            let result = self.run_or_report(suite, case);
+            if blocked.is_none() {
+                blocked = match result.verdict {
+                    Verdict::Pass => None,
+                    Verdict::Reject => Some(format!("control rejected: {}", result.detail)),
+                    Verdict::Alter => Some(
+                        "control altered: adapter mapping is wrong, fix it before trusting any row"
+                            .to_string(),
+                    ),
+                    // The control row already carries the full reason. Repeating
+                    // it on every remaining row turns one fact into five.
+                    Verdict::NotApplicable if result.detail.starts_with("harness error") => {
+                        Some(format!("not attempted: control {} did not run", case.id))
+                    }
+                    Verdict::NotApplicable => Some(result.detail.clone()),
+                };
+            }
             results.push(result);
         }
+
+        for case in &rest {
+            results.push(match &blocked {
+                Some(reason) => CheckResult {
+                    id: case.id.clone(),
+                    title: case.title.clone(),
+                    verdict: Verdict::NotApplicable,
+                    detail: reason.clone(),
+                },
+                None => self.run_or_report(suite, case),
+            });
+        }
+        results.sort_by(|a, b| a.id.cmp(&b.id));
         Outcome {
             backend: self.backend.name.clone(),
             backend_version,
             suite: suite.to_string(),
             url: self.base_url.clone(),
             results,
+        }
+    }
+
+    /// Runs one case, turning a harness failure into a row rather than losing
+    /// the whole suite. A harness error is `N/A`, never a verdict: the runner
+    /// or the network failed, and the backend has not been asked anything.
+    fn run_or_report(&self, suite: &str, case: &Case) -> CheckResult {
+        match self.run_case(suite, case) {
+            Ok(result) => result,
+            Err(e) => CheckResult {
+                id: case.id.clone(),
+                title: case.title.clone(),
+                verdict: Verdict::NotApplicable,
+                detail: format!("harness error: {e:#}"),
+            },
         }
     }
 
@@ -95,6 +141,17 @@ impl Runner {
             .protocols
             .get(suite)
             .with_context(|| format!("adapter {} has no protocol {suite}", self.backend.name))?;
+
+        // A backend that does not speak this encoding is not failing the check,
+        // it is ineligible for it. Sending anyway would manufacture one
+        // rejection per case out of a single fact.
+        if !protocol.formats.is_empty() && !protocol.formats.contains(&case.send.format) {
+            return Ok(self.result(
+                case,
+                Verdict::NotApplicable,
+                format!("encoding {} not accepted by this backend", case.send.format),
+            ));
+        }
 
         let payload_path = case.payload_path();
         let raw = std::fs::read(&payload_path)
@@ -335,7 +392,14 @@ impl Runner {
             return Ok(None);
         }
         let value: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
-        Ok(value.get(&vf.field).and_then(|v| v.as_str()).map(str::to_string))
+        // A version may sit at the top level or be nested. Accept both, as the
+        // adapter's `field` is documented to allow either.
+        let found = if vf.field.starts_with('/') {
+            value.pointer(&vf.field)
+        } else {
+            value.get(&vf.field)
+        };
+        Ok(found.and_then(|v| v.as_str()).map(str::to_string))
     }
 }
 
@@ -415,6 +479,45 @@ mod tests {
     fn first_record_ignores_records_without_the_key() {
         let response = json!({"hits": [{"body": "someone else's"}]});
         assert!(first_record(&response, "/hits", "sm-new").is_none());
+    }
+
+    /// A backend that does not speak the case's encoding must be reported as
+    /// ineligible without a request being sent. The URL here is a closed port:
+    /// if the runner tried to reach it the test would fail with a harness
+    /// error rather than N/A.
+    #[test]
+    fn unaccepted_encoding_yields_not_applicable_without_a_request() {
+        let adapter: crate::backend::Backend = serde_yaml::from_str(
+            r#"
+name: protobuf-only
+protocols:
+  otlp-logs:
+    formats: [otlp-protobuf]
+    ingest:
+      request: POST /v1/logs
+"#,
+        )
+        .expect("adapter parses");
+
+        let case: Case = serde_yaml::from_str(
+            r#"
+id: otlp-logs/minimal-record
+protocol: otlp-logs
+title: control
+send:
+  format: otlp-json
+  body: cases/otlp-logs/minimal-record.json
+expect:
+  ingest: accepted
+"#,
+        )
+        .expect("case parses");
+
+        let runner = Runner::new(adapter, "http://127.0.0.1:1".into(), false).unwrap();
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+
+        assert_eq!(result.verdict, Verdict::NotApplicable);
+        assert!(result.detail.contains("otlp-json"), "detail: {}", result.detail);
     }
 
     #[test]

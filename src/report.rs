@@ -31,8 +31,9 @@ pub fn print_table(outcome: &Outcome) {
     let pass = outcome.count(Verdict::Pass);
     let reject = outcome.count(Verdict::Reject);
     let alter = outcome.count(Verdict::Alter);
+    let not_applicable = outcome.count(Verdict::NotApplicable);
     println!(
-        "\n  {} checks, {pass} pass, {reject} reject, {alter} alter",
+        "\n  {} checks, {pass} pass, {reject} reject, {alter} alter, {not_applicable} n/a",
         outcome.results.len()
     );
 
@@ -49,5 +50,6 @@ fn label(verdict: Verdict) -> &'static str {
         Verdict::Pass => "PASS",
         Verdict::Reject => "REJECT",
         Verdict::Alter => "ALTER",
+        Verdict::NotApplicable => "N/A",
     }
 }
