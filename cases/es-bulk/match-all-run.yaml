@@ -26,3 +26,13 @@ expect:
 
 notes: >
   Elasticsearch 8.15.0, observed 2026-09-08: all four documents.
+
+  Quickwit 0.8.2: PASS, all four documents, confirmed 2026-09-08.
+
+  This control earned its place twice over. At the 30s poll the other adapters
+  use, it reported all four rows missing — an ALTER, and a false finding of
+  silent data loss on a store that was merely slower than the harness. It then
+  caught a defect in the runner itself: run_query settled as soon as two reads
+  agreed, and two consecutive empty reads agree, so it returned nothing after
+  two polls no matter how long the timeout was. Both were caught before any row
+  in this suite was believed, which is exactly what a control is for.
