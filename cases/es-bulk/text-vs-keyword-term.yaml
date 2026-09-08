@@ -17,6 +17,9 @@ rule:
     suite filter on a numeric field, so that this behaviour cannot be mistaken
     for a difference in their semantics.
 
+  observed:
+    - https://github.com/quickwit-oss/quickwit/issues/6787
+
 send:
   format: es-ndjson
   body: cases/es-bulk/text-and-sort.ndjson
