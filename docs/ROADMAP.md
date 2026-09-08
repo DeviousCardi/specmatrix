@@ -338,3 +338,71 @@ pass.
 - The three-verdict scheme has no room for a conformance defect that alters no
   data. Recorded here rather than resolved by inventing a fourth verdict
   mid-execution; it belongs in `docs/DESIGN.md` if it recurs.
+
+---
+
+## 0.2 Part E result — the matrix runs unattended
+
+`PLAN-0.2.md` Part E asked whether the whole matrix could be produced from one
+command on a machine with only Docker and Rust. It can.
+
+### Does it run without intervention
+
+Yes. `specmatrix matrix --suite otlp-logs --manage` started five containers from
+their adapters, ran sixteen checks against each, stopped them, and wrote
+`matrix.json`, `matrix.md` and a static `matrix.html` in four and a half
+minutes, from zero containers and with none left behind. The es-bulk matrix does
+the same across three.
+
+Every verdict matches what is recorded in the case notes, which is the point:
+the notes were written from runs against long-lived containers by hand, and the
+unattended run reproduces them.
+
+### Are reruns deterministic
+
+Yes, and that is what per-case teardown was for. Four backends give identical
+verdicts on consecutive runs of the whole suite. `teardown` had been declared in
+the adapter schema since 0.1 and never sent, so before this a rerun measured
+whatever the previous run had left behind.
+
+### What unattended running found that hand-running had hidden
+
+One thing, and it was ours. Running es-bulk with `--manage` produced a rejected
+control on Quickwit that passes against a long-lived container.
+
+Each case tears its index down and creates it again. Quickwit answers "already
+exists" to a create issued while a delete is still in flight, and the runner
+treated that 400 as proof the index was there — several stores use it for
+exactly that. The delete then finished, the write landed on an index that had
+gone, and the ingest answered 404. Only the first case in a suite hits it, which
+is why hand-running never showed it.
+
+A store was being blamed for a race in the tool measuring it, and the verdict
+looked exactly like a real one. Adapters now declare `setup_verify`, a request
+the runner polls until the store answers 2xx before the case is measured at all;
+a precondition that never holds is `N/A` with its reason and no write is
+attempted. With it, Quickwit's es-bulk column reproduces the verdicts recorded
+by hand, both ALTERs included.
+
+The obvious explanation was checked first and was wrong: Quickwit's `livez` and
+`readyz` both pass at 4.2s and index creation succeeds at 5.0s, so the readiness
+probe was not the problem.
+
+### Are the results attributable
+
+Yes. Each column records the version the backend reports and the image its
+adapter pins, and the page shows both when they disagree — Loki reports
+`release-3.1.x-89fe788` from `grafana/loki:3.1.1`. A committed adapter must pin
+its tag and the runner refuses to start one that does not, with a test asserting
+every adapter in the repository is pinned and startable. The rendered page
+carries the corpus commit, so a reader can check out the exact checks that
+produced the cells.
+
+### Still open
+
+- `results/` is in `.gitignore` from the first commit, and Part I of
+  `PLAN-1.0.md` wants each quarterly matrix committed by pull request. One of
+  the two has to give, and it is a publication decision rather than a runner
+  one.
+- Nothing is filed upstream yet. `CONTRIBUTING.md` requires filing before
+  publishing, and Part F cannot start until it is done.
