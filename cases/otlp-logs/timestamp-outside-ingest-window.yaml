@@ -63,11 +63,27 @@ notes: >
   so in practice the notice does not reach the caller and the record is gone
   without a readable word about it.
 
-  The runner classifies on HTTP status alone and does not read
-  partial_success, so it cannot yet tell this apart from a store that says
-  nothing at all. That gap is recorded rather than papered over; a store that
-  reports a rejection the caller can read is doing something different from
-  one that does not, and the matrix should say so.
+  The runner now reads partial_success and says what the store reported, so
+  this row reads in full:
+
+    ALTER  accepted (200) but never became queryable; store reported 1
+           rejected record(s): Too old data, only last 5 hours data can be
+           ingested...; request was JSON, response body is protobuf and
+           content-type says application/json, so no conformant client can
+           read that report
+
+  The verdict stays ALTER. The record is gone, and a caller who trusted the
+  200 is equally wrong whether or not an unreadable notice accompanied it. But
+  a store that names what it dropped has behaved better than one that says
+  nothing, and the detail now distinguishes them.
+
+  Quickwit 0.8.2 gets the same encoding wrong in the other direction: it
+  answers a protobuf export with a JSON body, also under
+  content-type: application/json. Both are the same defect against the same
+  requirement, that a response use the encoding of its request, and both are
+  worth filing. Neither is a verdict of its own: no data is altered by a
+  malformed response, and stretching ALTER to cover one would blunt the
+  verdict this project exists to make sharp.
 
   Quickwit 0.8.2: PASS, round trip intact. It keeps a record dated thirty days
   ago, so of the three stores only OpenObserve discards out-of-window data.
