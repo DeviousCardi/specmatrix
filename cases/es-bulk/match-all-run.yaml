@@ -36,3 +36,9 @@ notes: >
   agreed, and two consecutive empty reads agree, so it returned nothing after
   two polls no matter how long the timeout was. Both were caught before any row
   in this suite was believed, which is exactly what a control is for.
+
+  OpenObserve v0.92.2: N/A, adapter declares no query endpoint. Confirmed by
+  hand: it exposes no Elasticsearch-compatible search at any path tried —
+  /api/{org}/{stream}/_search, /es/{stream}/_search, /es/_search,
+  /api/{org}/_msearch and /api/{org}/{stream}/_msearch all answer 404. The
+  documents are there; the protocol cannot be used to ask for them.

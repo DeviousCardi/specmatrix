@@ -33,3 +33,6 @@ notes: >
   `_bulk` against a missing index answers 404 — and a 90s poll, because a newly
   created index defaults to commit_timeout_secs: 60 and documents become
   searchable at about 65s.
+
+  OpenObserve v0.92.2: PASS, round trip intact, confirmed 2026-09-08. It
+  accepts the Elasticsearch _bulk API and stores what that API is given.
