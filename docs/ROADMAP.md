@@ -242,3 +242,99 @@ Carried into 0.2, in the order they were discovered:
    compared without pretending they are the same shape.
 4. **Timestamps in payloads should not be fixed.** A corpus that ages out of a
    store's ingest window tests the fixture, not the backend.
+
+---
+
+## 0.2 Part A result — the four debts paid
+
+`PLAN-0.2.md` Part A closed the four things 0.1 carried forward. Three backends
+now have OTLP-logs columns, on both wire encodings, with six checks.
+
+### Does the corpus still test the backend rather than the fixture
+
+Yes, and the setting that hid it is gone. Payload instants are generated per
+run, so `ZO_INGEST_ALLOWED_UPTO` is back at OpenObserve's default and every
+check runs against a stock container. `minimal-record` passes there at the
+default five-hour window, which is what the widening existed to fake.
+
+`timestamp-nanosecond-precision` uses a variable that is the current second plus
+a fixed remainder of `123456789`, not a live nanosecond clock. A live clock
+would land on a whole millisecond about one run in a thousand and silently
+report no precision loss, which reads as a store that kept nanoseconds.
+
+### Can two stores that answer in different shapes be compared
+
+Yes, and it took saying so precisely. A check can declare how to read a field —
+`{field: timeUnixNano, as: timestamp}` — and the result line names the type and
+the precision. Three stores, three answers, none of them nanoseconds:
+
+| Backend | Read back | |
+| --- | --- | --- |
+| Parseable v2.9.4 | `"2026-09-08T09:31:55.123"` | string, milliseconds |
+| OpenObserve v0.92.2 | `1788859915123456` | number, microseconds |
+| Quickwit 0.8.2 | `1788859957123456000` | number, nanoseconds holding whole microseconds |
+
+Quickwit's answer is the one that showed the report could publish a false claim.
+Described by its unit alone that row read `nanoseconds`, asserting a precision
+Quickwit did not keep, so the runner now also names the finest unit a value is a
+whole multiple of when that is coarser than the unit itself.
+
+The comparison rule is what keeps a typed read from becoming normalisation: two
+instants are equal only when they name the same nanosecond. Promoted to `exact`,
+all three would fail. It is not promoted — three implementations disagreeing is
+not a rule about what a store must preserve, and the specification does not give
+one. Still recorded, still not adjudicated.
+
+### Does Quickwit have verdicts
+
+Yes. The runner encodes the corpus's OTLP JSON as protobuf, so the column that
+was five `N/A` in 0.1 now carries four passes, one rejection and one `N/A` —
+and that remaining `N/A` is honest: `body-invalid-utf8` cannot exist as a
+protobuf string, which is a limit of the wire format rather than of Quickwit.
+
+The guard that would have prevented this is worth recording, because it was
+invisible until the code was read. Eligibility was decided on the format the
+payload file happens to use and returned `N/A` before the payload was read, so
+the conversion could never have run. It is now decided on what a case can be
+converted to.
+
+### What was found, on backends whose adapters were not tuned around the checks
+
+**Quickwit 0.8.2 returns 500 to an empty export.** Parseable and OpenObserve
+both answer 200. An empty export is ordinary traffic, since Collectors flush on
+a timer, and a 5xx tells the Collector the fault is the server's and to retry —
+so a batching Collector with nothing to send retries indefinitely. The inner
+message is empty, leaving an operator nothing to act on.
+
+**OpenObserve v0.92.2 accepts an out-of-window record with 200 and stores
+nothing** — the accident 0.1 tripped over, now measured on purpose. Confirming
+it by hand made the finding narrower and better: the 200 body is a protobuf
+`ExportLogsServiceResponse` with `partial_success.rejected_log_records = 1` and
+a clear message. OpenObserve does report the discard through the channel OTLP
+defines for it.
+
+**Both stores return the wrong response encoding, in opposite directions.** OTLP
+requires a response to use its request's encoding. OpenObserve answers a JSON
+export with protobuf; Quickwit answers a protobuf export with JSON; both label
+it `content-type: application/json`. So OpenObserve's discard notice reaches no
+conformant JSON client: the data loss is announced in a form nobody can parse.
+
+Neither encoding defect is given a verdict. No data is altered by a malformed
+response, and stretching `ALTER` to cover one would blunt the verdict this
+project exists to make sharp. Both are reported on every affected row.
+
+### Was any verdict hidden or created by a field mapping
+
+No. Quickwit needed four renames, all confirmed against a stored document
+before being written down — the body is at `/body/message` rather than `/body`,
+and attribute keys keep their dots under `attributes`, so the run key is queried
+as `attributes.specmatrix.run:<key>`. No value was rewritten to make anything
+pass.
+
+### Still open
+
+- Both response-encoding defects are unfiled. `CONTRIBUTING.md` requires filing
+  before publishing, and Part F requires it before the page goes up.
+- The three-verdict scheme has no room for a conformance defect that alters no
+  data. Recorded here rather than resolved by inventing a fourth verdict
+  mid-execution; it belongs in `docs/DESIGN.md` if it recurs.
