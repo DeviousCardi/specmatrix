@@ -284,6 +284,14 @@ impl Runner {
         vars.insert("suite_stream", stream);
         vars.insert("window_start", (now - chrono::Duration::minutes(5)).to_rfc3339());
         vars.insert("window_end", (now + chrono::Duration::minutes(5)).to_rfc3339());
+        // Some stores take the search window as microseconds since the epoch
+        // rather than RFC 3339. The window is wide because a corpus payload may
+        // carry a fixed historical timestamp, and the record is found by its run
+        // key rather than by when it claims to have happened.
+        let start_us = (now - chrono::Duration::days(730)).timestamp_micros();
+        let end_us = (now + chrono::Duration::days(1)).timestamp_micros();
+        vars.insert("window_start_us", start_us.to_string());
+        vars.insert("window_end_us", end_us.to_string());
         vars
     }
 
@@ -332,10 +340,10 @@ impl Runner {
             }
             builder = self.authenticate(builder);
             if let Some(body) = &readback.request.body {
-                let rendered = template::render(&body.to_string(), vars);
+                let rendered = template::render_json(body, vars);
                 builder = builder
                     .header("Content-Type", "application/json")
-                    .body(rendered);
+                    .body(rendered.to_string());
             }
             if let Ok(response) = builder.send() {
                 let text = response.text().unwrap_or_default();

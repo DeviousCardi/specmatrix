@@ -153,10 +153,92 @@ Two consequences for 0.2, and neither is optional:
    shape of traffic at all, and conflating the two would have had me debugging a
    correct adapter.
 
+### Which checks differ between Parseable and OpenObserve
+
+One of five, and it is the check that was written not to judge.
+
+| Check | Parseable v2.9.4 | OpenObserve v0.92.2 |
+| --- | --- | --- |
+| `minimal-record` (control) | PASS | PASS |
+| `schema-url-omitted` | PASS | PASS |
+| `empty-batch` | PASS | PASS |
+| `body-invalid-utf8` | REJECT, 400 invalid unicode code point | REJECT, 400 invalid unicode code point |
+| `timestamp-nanosecond-precision` | `"2025-08-12T12:00:00.123"` | `1755000000123456` |
+
+Both stores refuse invalid UTF-8 rather than storing a rewritten body, which is
+what the rule permits, and they agree on the three checks that assert equality.
+
+They disagree on the timestamp. Sent `1755000000123456789`, Parseable keeps a
+millisecond-precision **string** and OpenObserve keeps a microsecond **integer**.
+Both discard nanoseconds, by different amounts and into different types. Anyone
+moving between the two silently changes the resolution of every timestamp they
+own, and nothing in either system reports it.
+
+That disagreement is the condition the roadmap set for promoting the check from
+`present` to `exact`. It is not being promoted, because promotion needs a rule
+saying what a store must preserve and the OTLP specification does not give one.
+Under the adjudication order in `docs/DESIGN.md` this is case 3, genuinely
+ambiguous, and the answer is to record it and not ship a verdict.
+
+### Was any verdict hidden or created by a field mapping
+
+No, and one mapping was required in each adapter.
+
+Parseable keeps severity under `severity_text`; OpenObserve keeps it under
+`severity` and has no column for `severityNumber` at all. Both are renames, and
+a check naming `severityNumber` on OpenObserve reads as absent rather than being
+quietly satisfied from another column. No value was rewritten to make anything
+pass.
+
+One backend setting was changed and it is not a mapping: OpenObserve's default
+`ZO_INGEST_ALLOWED_UPTO` is five hours, and the corpus payloads carry a fixed
+timestamp from 2025. At the default the store answers **200 and discards the
+record**, which the runner reported as an `ALTER`. That verdict was correct
+about what happened and wrong about why: the cause was the fixture's age, not a
+defect. Widening the window is recorded in the adapter with that reasoning.
+
+The behaviour is worth a case of its own in 0.2. Accepting a write with 200 and
+discarding it is the exact failure this project exists to surface, and it is
+currently only visible because a fixture happened to trip it.
+
+### Is the 0.1 exit criterion met
+
+Yes. `body-invalid-utf8` produced `REJECT` against OpenObserve, whose adapter
+was written before that check was ever run against it, and
+`timestamp-nanosecond-precision` produced a value that differs from Parseable's.
+Neither outcome was arranged by the adapter.
+
+The weaker claim also holds: the control caught a real adapter error before it
+became a finding. The first Parseable run reported two `ALTER`s that were my
+`severity_text` mapping, not the backend.
+
+### Can the round trip be made fair across stores with different models
+
+Yes, with one qualification that 0.2 has to carry.
+
+Two stores with unrelated storage models — Parseable on a data lake with SQL,
+OpenObserve with its own columnar engine — ran the same five payloads and
+returned comparable answers, using nothing but renames. Fairness did not require
+normalising values, which was the stop condition in this roadmap.
+
+The qualification is types. Parseable returned a timestamp as a string and
+OpenObserve as an integer, so `sent X, read back Y` is honest but not directly
+comparable across a row. A check that wants to assert on a value across stores
+needs to say what type it expects, or the matrix will compare a string with a
+number and call it a difference when it may not be one.
+
 ### Status
 
-0.1 is **not** complete against its own exit criterion: no check has yet failed
-against a backend whose adapter was not tuned around it, because the second
-backend could not be reached. The idea is not disproved — the round trip works
-and produced real results on one backend — but the second column has to wait for
-the encoding work above rather than be forced now.
+0.1 is complete. Two stores with verdicts on five checks, one store recorded as
+ineligible with the reason, one real divergence found, and no verdict invented
+where the specification is silent.
+
+Carried into 0.2, in the order they were discovered:
+
+1. **Protobuf encoding**, so Quickwit gets verdicts instead of a column of `N/A`.
+2. **A case for accept-then-discard**, prompted by OpenObserve's 200 on
+   out-of-window data.
+3. **Types in checks**, so a string timestamp and an integer timestamp can be
+   compared without pretending they are the same shape.
+4. **Timestamps in payloads should not be fixed.** A corpus that ages out of a
+   store's ingest window tests the fixture, not the backend.

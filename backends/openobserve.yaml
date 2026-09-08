@@ -1,0 +1,70 @@
+# Adapter for OpenObserve.
+#
+# Confirmed by hand against openobserve v0.92.2 on 2026-09-08. Re-confirm when
+# bumping the image. Two things differ from what the documentation suggests and
+# were only found by inspecting a stored record:
+#
+#   - the version is at GET /config, not /api/config, which 404s
+#   - attribute keys are flattened with `.` replaced by `_`, so the run key is
+#     stored as `specmatrix_run`
+#
+# ZO_INGEST_ALLOWED_UPTO is widened because corpus payloads carry fixed
+# historical timestamps. At the default of 5 hours OpenObserve answers 200 and
+# discards the record, which the runner would correctly report as an ALTER —
+# but that would be an artefact of the fixture rather than a fact about the
+# backend. The accept-then-discard behaviour itself is worth a case of its own.
+
+name: openobserve
+version_from:
+  request: GET /config
+  field: version
+
+container:
+  image: openobserve/openobserve:v0.92.2
+  port: 5080
+  env:
+    ZO_ROOT_USER_EMAIL: admin@specmatrix.local
+    # Must satisfy OpenObserve's password policy: 8-128 characters with an
+    # upper, a lower, a digit and a symbol, or the process exits at start-up.
+    ZO_ROOT_USER_PASSWORD: "Specmatrix#2026"
+    ZO_INGEST_ALLOWED_UPTO: "87600"
+  ready:
+    request: GET /healthz
+    expect_status: 200
+
+auth:
+  kind: basic
+  username: admin@specmatrix.local
+  password: "Specmatrix#2026"
+
+protocols:
+  otlp-logs:
+    formats: [otlp-json]
+    ingest:
+      request: POST /api/default/v1/logs
+      headers:
+        Content-Type: application/json
+        stream-name: "{{ suite_stream }}"
+    readback:
+      request: POST /api/default/_search
+      body:
+        query:
+          sql: "SELECT * FROM \"{{ suite_stream }}\" WHERE specmatrix_run = '{{ run_key }}'"
+          start_time: "{{ window_start_us }}"
+          end_time: "{{ window_end_us }}"
+      records: /hits
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000
+      # Renames only. Each column holds the value that was sent; nothing here
+      # rewrites one. `severityNumber` has no column at all, so a check naming
+      # it reads as absent, which is the honest answer.
+      fields:
+        body: /body
+        severityText: /severity
+        timeUnixNano: /_timestamp
+
+normalise:
+  drop_fields:
+    - _timestamp
+    - dropped_attributes_count

@@ -27,3 +27,13 @@ notes: >
   Observed on Parseable v2.9.4: sent "1755000000123456789", read back
   "2025-08-12T12:00:00.123". Stored as a millisecond-precision string, so the
   final six digits are dropped. Adjudication open.
+
+  OpenObserve v0.92.2: sent "1755000000123456789", read back 1755000000123456.
+  Stored as a microsecond integer, so the final three digits are dropped.
+
+  The two stores disagree: Parseable keeps milliseconds as a string, OpenObserve
+  keeps microseconds as an integer. Both discard nanoseconds, by different
+  amounts and into different types. That disagreement is the condition the
+  roadmap set for promoting this check to `exact`, but promotion needs a rule
+  saying what a store must preserve, and the specification does not give one.
+  Recorded, not adjudicated.
