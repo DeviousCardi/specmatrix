@@ -582,16 +582,26 @@ impl Runner {
         if !(200..300).contains(&response.status) {
             return Ok(None);
         }
-        let value: serde_json::Value = serde_json::from_slice(&response.body).unwrap_or_default();
+        let text = response.text();
+        if let Some(pattern) = vf.pattern.as_deref() {
+            let regex = regex::Regex::new(pattern)
+                .with_context(|| format!("version_from.pattern {pattern:?}"))?;
+            return Ok(version_from_text(&regex, &text));
+        }
+        let Some(field) = vf.field.as_deref() else {
+            anyhow::bail!("version_from needs either a `field` or a `pattern`");
+        };
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
         // A version may sit at the top level or be nested. Accept both, as the
         // adapter's `field` is documented to allow either.
-        let found = if vf.field.starts_with('/') {
-            value.pointer(&vf.field)
-        } else {
-            value.get(&vf.field)
-        };
+        let found = if field.starts_with('/') { value.pointer(field) } else { value.get(field) };
         Ok(found.and_then(|v| v.as_str()).map(str::to_string))
     }
+}
+
+/// Pulls a version out of a text response using the adapter's pattern.
+fn version_from_text(regex: &regex::Regex, text: &str) -> Option<String> {
+    regex.captures(text)?.get(1).map(|m| m.as_str().to_string())
 }
 
 /// Renders what a store reported about a write it accepted, for appending to a
@@ -851,6 +861,24 @@ expect:
     fn first_record_rejects_an_error_object() {
         let response = json!({"error": "index not found"});
         assert!(first_record(&response, "", "sm-new").is_none());
+    }
+
+    /// Several stores report their version only on a Prometheus metrics
+    /// endpoint, which is text rather than JSON.
+    #[test]
+    fn a_version_can_be_read_out_of_a_text_response() {
+        let regex = regex::Regex::new(r#"vm_app_version\{.*short_version="([^"]+)""#).unwrap();
+        let body = concat!(
+            "# HELP vm_app_version Version\n",
+            "vm_app_version{version=\"victoria-logs-20260716-tags-v1.52.0\", short_version=\"v1.52.0\"} 1\n",
+        );
+        assert_eq!(version_from_text(&regex, body), Some("v1.52.0".to_string()));
+    }
+
+    #[test]
+    fn a_pattern_that_matches_nothing_yields_no_version() {
+        let regex = regex::Regex::new(r"nothing_like_this=(\d+)").unwrap();
+        assert_eq!(version_from_text(&regex, "some other output"), None);
     }
 
     /// A payload carrying a fixed historical instant ages out of a store's

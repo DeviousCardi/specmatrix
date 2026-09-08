@@ -43,3 +43,7 @@ notes: >
   Quickwit 0.8.2: N/A. The case is JSON-only by construction and Quickwit's
   OTLP endpoint accepts protobuf only, so it was never sent. That is the
   honest answer rather than a pass or a failure.
+
+  VictoriaLogs v1.52.0: N/A, for the same reason as Quickwit. It refuses OTLP
+  JSON — "json encoding isn't supported for opentelemetry format. Use protobuf
+  encoding", HTTP 400 — and this payload cannot exist as protobuf.

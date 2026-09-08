@@ -31,3 +31,5 @@ notes: >
   Parseable v2.9.4: PASS. OpenObserve v0.92.2: PASS. Neither requires schemaUrl.
 
   Quickwit 0.8.2: PASS. Three stores now, none of which requires schemaUrl.
+
+  VictoriaLogs v1.52.0: PASS. Four stores, none requiring schemaUrl.
