@@ -12,6 +12,7 @@ rule:
     and replacing the bytes is an ALTER unless the backend documents the
     replacement. Accepting and truncating the body is an ALTER regardless.
   observed:
+    - https://github.com/grafana/loki/issues/24423
     - https://github.com/vectordotdev/vector/issues/20462
 
 send:

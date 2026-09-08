@@ -10,6 +10,9 @@ rule:
     timer, so an empty export is ordinary traffic rather than an error, and a
     receiver that rejects it produces failures with no cause a user can act on.
 
+  observed:
+    - https://github.com/quickwit-oss/quickwit/issues/6784
+
 send:
   format: otlp-json
   encodings: [otlp-json, otlp-protobuf]

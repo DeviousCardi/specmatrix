@@ -13,6 +13,9 @@ rule:
     that ignores the option, or that has no notion of a missing sort value,
     returns the same order for both queries and reports no error.
 
+  observed:
+    - https://github.com/quickwit-oss/quickwit/issues/6785
+
 send:
   format: es-ndjson
   body: cases/es-bulk/text-and-sort.ndjson

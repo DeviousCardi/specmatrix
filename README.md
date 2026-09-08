@@ -97,9 +97,10 @@ into the field that holds the log line; two answer 200 to a record they will not
 keep, one of them saying nothing at all. Each is recorded in the case that found
 it, with the version and the exact request.
 
-Every one of those is unfiled, and `CONTRIBUTING.md` requires filing before
-publishing: a maintainer should learn about a finding from their own tracker,
-not from a comparison table.
+All seven are filed with the projects they concern, each with a reproduction
+that needs nothing but `curl`, and each linked from the check that found it —
+`CONTRIBUTING.md` requires that a maintainer learns about a finding from their
+own tracker rather than from a comparison table.
 
 [`AGENTS.md`](AGENTS.md) has the design and the rules a change has to satisfy.
 [`CONTRIBUTING.md`](CONTRIBUTING.md) has what a pull request needs.
