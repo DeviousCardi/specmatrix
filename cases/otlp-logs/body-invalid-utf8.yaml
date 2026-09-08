@@ -1,0 +1,32 @@
+id: otlp-logs/body-invalid-utf8
+protocol: otlp-logs
+title: A body containing invalid UTF-8 is not silently rewritten
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/common/v1
+  section: AnyValue.string_value
+  text: >
+    Protobuf string fields must be valid UTF-8, and a conformant decoder is
+    permitted to reject a payload that is not. Rejecting is a REJECT. Accepting
+    and replacing the bytes is an ALTER unless the backend documents the
+    replacement. Accepting and truncating the body is an ALTER regardless.
+  observed:
+    - https://github.com/vectordotdev/vector/issues/20462
+
+send:
+  format: otlp-json
+  body: cases/otlp-logs/body-invalid-utf8.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [body]
+
+notes: >
+  Parseable v2.9.4: REJECT. "400 Could not deserialize into JSON object,
+  invalid unicode code point at line 1 column 345". This is the behaviour the
+  rule permits, so the verdict records what happens rather than reporting a
+  fault: the caller is told, and no altered record is stored.
+

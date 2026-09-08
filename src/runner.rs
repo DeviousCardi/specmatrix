@@ -139,28 +139,67 @@ impl Runner {
                 format!("accepted ({status}) but never became queryable"),
             )),
             Some(record) => {
-                let sent: serde_json::Value = serde_json::from_slice(&template::render_bytes(
-                    &std::fs::read(&payload_path)?,
-                    &vars,
-                ))
-                .unwrap_or(serde_json::Value::Null);
+                let rendered = template::render_bytes(&std::fs::read(&payload_path)?, &vars);
+                let (sent, sent_was_lossy) = parse_sent(&rendered);
 
-                let mut differences = Vec::new();
-                for field in &expect.on {
-                    let want = crate::otlp::logical_field(&sent, field);
-                    let got = self.field_of(readback, &record, field);
-                    if want != got {
-                        differences.push(format!(
+                let observed: Vec<String> = expect
+                    .on
+                    .iter()
+                    .map(|field| {
+                        let want = crate::otlp::logical_field(&sent, field);
+                        let got = self.field_of(readback, &record, field);
+                        (field, want, got)
+                    })
+                    .filter(|(_, want, got)| expect.match_ != "exact" || want != got)
+                    .map(|(field, want, got)| {
+                        format!(
                             "{field}: sent {}, read back {}",
                             render_opt(&want),
                             render_opt(&got)
-                        ));
-                    }
+                        )
+                    })
+                    .collect();
+
+                // A payload that is not valid UTF-8 cannot be compared field by
+                // field: our own expectation had to be produced by a lossy
+                // decode, so "equal" only means the backend replaced the same
+                // bytes we did. Report the substitution rather than a match.
+                if sent_was_lossy && expect.match_ == "exact" {
+                    let replaced: Vec<String> = expect
+                        .on
+                        .iter()
+                        .map(|field| {
+                            let want = crate::otlp::logical_field(&sent, field);
+                            let got = self.field_of(readback, &record, field);
+                            if want == got {
+                                format!("{field}: invalid bytes replaced with U+FFFD")
+                            } else {
+                                format!(
+                                    "{field}: sent {}, read back {}",
+                                    render_opt(&want),
+                                    render_opt(&got)
+                                )
+                            }
+                        })
+                        .collect();
+                    return Ok(self.result(case, Verdict::Alter, replaced.join("; ")));
                 }
-                if differences.is_empty() {
-                    Ok(self.result(case, Verdict::Pass, format!("{status}, round trip intact")))
-                } else {
-                    Ok(self.result(case, Verdict::Alter, differences.join("; ")))
+
+                match expect.match_.as_str() {
+                    "exact" if observed.is_empty() => {
+                        Ok(self.result(case, Verdict::Pass, format!("{status}, round trip intact")))
+                    }
+                    "exact" => Ok(self.result(case, Verdict::Alter, observed.join("; "))),
+                    // `present` is for values the project has not adjudicated.
+                    // Show what the backend stored so the divergence is visible,
+                    // but do not call it a failure on the strength of a guess.
+                    "present" => {
+                        Ok(self.result(case, Verdict::Pass, format!("recorded — {}", observed.join("; "))))
+                    }
+                    other => anyhow::bail!(
+                        "case {} declares readback.match: {other:?}; expected `exact` or `present`",
+                        case.id
+                    ),
                 }
             }
         }
@@ -222,6 +261,7 @@ impl Runner {
     /// Most backends acknowledge a write before it is queryable, so a single
     /// immediate read would report every backend as dropping data.
     fn read_back(&self, readback: &Readback, vars: &Vars) -> Result<Option<serde_json::Value>> {
+        let run_key = vars.get("run_key").cloned().unwrap_or_default();
         let deadline = Instant::now() + Duration::from_millis(readback.poll.timeout_ms);
         loop {
             let (method, path) = readback.request.parts()?;
@@ -243,7 +283,7 @@ impl Runner {
             if let Ok(response) = builder.send() {
                 let text = response.text().unwrap_or_default();
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(record) = first_record(&value, &readback.records) {
+                    if let Some(record) = first_record(&value, &readback.records, &run_key) {
                         return Ok(Some(record));
                     }
                 }
@@ -299,17 +339,44 @@ impl Runner {
     }
 }
 
-/// Pulls the first record out of a read-back response.
-fn first_record(value: &serde_json::Value, records_pointer: &str) -> Option<serde_json::Value> {
+/// Pulls this run's record out of a read-back response.
+///
+/// Matching on the run key rather than taking the first element rules out two
+/// false positives: an error response that happens to be a JSON object, and a
+/// record left behind by an earlier run.
+fn first_record(
+    value: &serde_json::Value,
+    records_pointer: &str,
+    run_key: &str,
+) -> Option<serde_json::Value> {
     let node = if records_pointer.is_empty() {
         value
     } else {
         value.pointer(records_pointer)?
     };
-    match node {
-        serde_json::Value::Array(items) => items.first().cloned(),
-        serde_json::Value::Object(_) => Some(node.clone()),
-        _ => None,
+    let items: Vec<&serde_json::Value> = match node {
+        serde_json::Value::Array(items) => items.iter().collect(),
+        serde_json::Value::Object(_) => vec![node],
+        _ => return None,
+    };
+    items
+        .into_iter()
+        .find(|record| record.to_string().contains(run_key))
+        .cloned()
+}
+
+/// Parses the payload we sent so its fields can be compared with what came
+/// back. Returns whether a lossy decode was needed: a payload carrying invalid
+/// UTF-8 is deliberate in this corpus, and a strict parse would fail and make
+/// every field read as absent.
+fn parse_sent(bytes: &[u8]) -> (serde_json::Value, bool) {
+    match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(value) => (value, false),
+        Err(_) => {
+            let lossy = String::from_utf8_lossy(bytes);
+            let value = serde_json::from_str(&lossy).unwrap_or(serde_json::Value::Null);
+            (value, true)
+        }
     }
 }
 
@@ -323,4 +390,61 @@ fn render_opt(value: &Option<serde_json::Value>) -> String {
 fn first_line(text: &str) -> String {
     let line = text.lines().next().unwrap_or("").trim();
     if line.len() > 120 { format!("{}…", &line[..120]) } else { line.to_string() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A leftover record from an earlier run must not be mistaken for this
+    /// one's, or a backend that dropped the write would look like it kept it.
+    #[test]
+    fn first_record_matches_on_the_run_key() {
+        let response = json!({
+            "hits": [
+                {"body": "from an earlier run", "specmatrix.run": "sm-old"},
+                {"body": "ours", "specmatrix.run": "sm-new"}
+            ]
+        });
+        let found = first_record(&response, "/hits", "sm-new").expect("record present");
+        assert_eq!(found.get("body").unwrap(), "ours");
+    }
+
+    #[test]
+    fn first_record_ignores_records_without_the_key() {
+        let response = json!({"hits": [{"body": "someone else's"}]});
+        assert!(first_record(&response, "/hits", "sm-new").is_none());
+    }
+
+    #[test]
+    fn parse_sent_reports_valid_utf8_as_strict() {
+        let (value, lossy) = parse_sent(br#"{"a": "plain"}"#);
+        assert!(!lossy);
+        assert_eq!(value.get("a").unwrap(), "plain");
+    }
+
+    /// The corpus deliberately carries payloads that are not valid UTF-8. A
+    /// strict parse fails on those, which would make every field read as absent
+    /// and hide what the backend actually did.
+    #[test]
+    fn parse_sent_falls_back_to_a_lossy_decode() {
+        let mut bytes = br#"{"a": "before-"#.to_vec();
+        bytes.extend_from_slice(&[0xff, 0xfe]);
+        bytes.extend_from_slice(br#"-after"}"#);
+
+        let (value, lossy) = parse_sent(&bytes);
+        assert!(lossy, "invalid UTF-8 must be reported as a lossy decode");
+        let a = value.get("a").and_then(|v| v.as_str()).unwrap_or_default();
+        assert!(a.starts_with("before-") && a.ends_with("-after"));
+        assert!(a.contains('\u{fffd}'), "replacement character expected, got {a:?}");
+    }
+
+    /// An error body is often a JSON object. Without the run key it would count
+    /// as the record having arrived.
+    #[test]
+    fn first_record_rejects_an_error_object() {
+        let response = json!({"error": "index not found"});
+        assert!(first_record(&response, "", "sm-new").is_none());
+    }
 }
