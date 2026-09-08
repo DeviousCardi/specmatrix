@@ -14,6 +14,9 @@ rule:
     it at the epoch has invented a timestamp it was explicitly told it did not
     have.
 
+  observed:
+    - https://github.com/quickwit-oss/quickwit/issues/6786
+
 send:
   format: otlp-json
   encodings: [otlp-json, otlp-protobuf]
