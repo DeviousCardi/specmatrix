@@ -29,7 +29,17 @@ pub struct Backend {
     /// 3.1.1 refuses anything over 30d1h with a 400 — so they narrow it here
     /// rather than the corpus narrowing it for everyone.
     pub lookback_days: Option<i64>,
+    /// Fields this backend adds to every record.
+    ///
+    /// Not yet applied, and deliberately kept. `docs/DESIGN.md` describes
+    /// normalisation as stripping what a store adds before comparing whole
+    /// documents; the runner compares only the fields a case names, so nothing
+    /// needs stripping yet. The declarations stay because they are true of the
+    /// stores and will be needed the first time a check asserts on a whole
+    /// record — and because deleting them would lose the hand-confirmation
+    /// behind them.
     #[serde(default)]
+    #[allow(dead_code)]
     pub normalise: Normalise,
     /// A request sent before each case's ingest, after teardown. Some stores
     /// will not create an index on write and must be given one; the shape of
@@ -152,7 +162,10 @@ fn default_timeout() -> u64 { 15_000 }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct Normalise {
+    /// Only additions belong here. A value that has to be rewritten to make a
+    /// check pass is a divergence being hidden, not a normalisation.
     #[serde(default)]
+    #[allow(dead_code)]
     pub drop_fields: Vec<String>,
 }
 
