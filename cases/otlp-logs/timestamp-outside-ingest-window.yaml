@@ -19,7 +19,7 @@ rule:
     notice the client cannot read, whether that is an empty partial_success or
     one encoded in a format the request did not use.
   observed:
-    - https://github.com/VictoriaMetrics/VictoriaMetrics/issues/11526
+    - https://github.com/VictoriaMetrics/VictoriaLogs/issues/1777
     - https://github.com/openobserve/openobserve/issues/14293
     - docs/ROADMAP.md, 0.1 result, OpenObserve v0.92.2 at default settings
 

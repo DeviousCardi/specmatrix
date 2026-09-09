@@ -14,7 +14,7 @@ rule:
     the structure will not find it.
 
   observed:
-    - https://github.com/VictoriaMetrics/VictoriaMetrics/issues/11525
+    - https://github.com/VictoriaMetrics/VictoriaLogs/issues/1778
 
 send:
   format: otlp-json

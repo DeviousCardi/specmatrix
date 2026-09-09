@@ -12,6 +12,7 @@ rule:
     sent as -0.0 has changed the value it was given.
   observed:
     - https://github.com/grafana/mimir/issues/16539
+    - https://github.com/VictoriaMetrics/VictoriaMetrics/issues/11533
 
 send:
   format: otlp-metrics-json

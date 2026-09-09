@@ -25,3 +25,15 @@ notes: >
   rather than treated as the OTLP/remote-write pattern of "empty is ordinary
   traffic": Loki's own reference behaviour is to refuse it, so a receiver
   that refuses it too is agreeing with the reference, not failing a rule.
+
+  VictoriaLogs v1.52.0: ALTER. Accepted with 204 where Loki refuses with 422.
+  Confirmed by hand on 2026-09-09.
+
+  Deliberately not filed upstream. Nothing is lost and nothing is altered — the
+  push carried no records to lose — so the divergence is that VictoriaLogs is
+  more permissive than the reference, not that it mishandled data. Accepting an
+  empty push is also what OTLP requires of its own receivers ("if the server
+  receives an empty request ... the server SHOULD respond with success"), so a
+  report asking VictoriaLogs to start refusing it would be asking for stricter
+  behaviour with no benefit to a sender. Recorded here so the row on the page
+  can be read without anyone having to re-derive why no issue is linked.

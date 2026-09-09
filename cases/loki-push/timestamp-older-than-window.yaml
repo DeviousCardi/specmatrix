@@ -12,6 +12,13 @@ rule:
     not keep has a conformant answer available — refuse it — and this is the
     de-facto reference for what that answer looks like when it names the
     reason.
+  observed:
+    # OpenObserve drops the line silently on this endpoint while reporting the
+    # same drop on its own OTLP endpoint.
+    - https://github.com/openobserve/openobserve/issues/14345
+    # VictoriaLogs does the same; the push-API reproduction is a comment on the
+    # existing issue for the OTLP path, since it is one defect on two endpoints.
+    - https://github.com/VictoriaMetrics/VictoriaLogs/issues/1777
 
 send:
   format: loki-json
