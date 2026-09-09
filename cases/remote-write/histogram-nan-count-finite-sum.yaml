@@ -1,18 +1,17 @@
-id: remote-write/histogram-nan-count
+id: remote-write/histogram-nan-count-finite-sum
 protocol: remote-write
-title: A NaN histogram _count is an ordinary value, not malformed input
+title: A histogram whose _count is NaN while _sum and buckets are finite
 
 rule:
-  basis: spec
-  spec: prometheus/remote-write/1.0
-  section: sample
+  basis: de-facto
+  reference: prometheus/3.6.0
+  section: histograms
   text: >
-    A Sample value is an IEEE 754 double, and NaN is one. A histogram whose
-    _count, _sum and _bucket series all carry NaN is what a scrape of a target
-    that has produced no observations looks like after a division by zero, and
-    it is ordinary conformant traffic. A receiver that treats NaN as malformed
-    refuses it; one that reconciles the series and fabricates a replacement
-    value is worse.
+    Nothing in remote-write requires the three series of a classic histogram to
+    agree, because each is an independent series and the receiver has no
+    obligation to relate them. The specification is therefore silent on what a
+    receiver does with an inconsistent set, and Prometheus's own behaviour is
+    the de-facto rule: each series is stored as sent.
   observed:
     - https://github.com/vectordotdev/vector/issues/26228
     - https://github.com/VictoriaMetrics/VictoriaMetrics/issues/7241
@@ -21,40 +20,27 @@ rule:
 send:
   format: remote-write-json
   encodings: [remote-write-protobuf]
-  body: cases/remote-write/histogram-nan-count.json
+  body: cases/remote-write/histogram-nan-count-finite-sum.json
 
 expect:
   ingest: accepted
   readback:
-    # Two assertions, because the finding is about both. The NaN must survive
-    # as NaN, and the unrelated gauge sent in the same request must survive at
-    # all: refusing or mangling a batch over one NaN costs data that has
-    # nothing to do with it.
     - match: exact
-      series: specmatrix_latency_seconds_count
+      series: specmatrix_mixed_seconds_count
       on:
         - field: value
           as: float
     - match: exact
-      series: specmatrix_unrelated_gauge
+      series: specmatrix_mixed_seconds_sum
       on:
         - field: value
           as: float
-        - labels
 
 notes: >
-  This is not a staleness check, and the distinction was got wrong the first
-  time this case was written. Prometheus marks a series stale with one specific
-  NaN payload, 0x7ff0000000000002; every other NaN is an ordinary value.
-  Confirmed against prom/prometheus:v3.6.0 on 2026-09-09 — the NaN sent here is
-  stored and reads back as "NaN", while the reserved payload ends the series.
-  stale-marker-hides-series covers that separately.
-
-  The check has two failure modes worth distinguishing. A 400 on the whole
-  request is a REJECT and costs every sample batched alongside. Accepting the
-  request and emitting the histogram with count 0 is an ALTER, and is worse:
-  the value is fabricated, no error is raised, and a dashboard renders it as a
-  real measurement.
+  The failure this looks for is a receiver that reconciles the three series and
+  fabricates a value for the one it finds inconsistent. Vector emits count 0
+  here, which is worse than dropping the sample: nothing errors, and a
+  dashboard renders the fabricated zero as a measurement.
 
   Measured 2026-09-09 against the then-current release of each store:
 

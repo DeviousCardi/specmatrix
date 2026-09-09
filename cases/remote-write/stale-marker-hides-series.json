@@ -1,0 +1,44 @@
+{
+  "timeseries": [
+    {
+      "labels": [
+        {
+          "name": "__name__",
+          "value": "specmatrix_stale_gauge"
+        },
+        {
+          "name": "specmatrix_run",
+          "value": "{{ run_key }}"
+        }
+      ],
+      "samples": [
+        {
+          "value": 42,
+          "timestamp": "{{ now_minus_10s_ms }}"
+        },
+        {
+          "value": "StaleNaN",
+          "timestamp": "{{ now_ms }}"
+        }
+      ]
+    },
+    {
+      "labels": [
+        {
+          "name": "__name__",
+          "value": "specmatrix_stale_witness"
+        },
+        {
+          "name": "specmatrix_run",
+          "value": "{{ run_key }}"
+        }
+      ],
+      "samples": [
+        {
+          "value": 1,
+          "timestamp": "{{ now_ms }}"
+        }
+      ]
+    }
+  ]
+}

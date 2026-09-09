@@ -1,0 +1,12 @@
+{
+  "timeseries": [
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_bad_label_gauge"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"},
+        {"name": "1zone", "value": "a"}
+      ],
+      "samples": [{"value": 1, "timestamp": "{{ now_ms }}"}]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "timeseries": [
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_resumed_gauge"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [
+        {"value": 41, "timestamp": "{{ now_minus_1h_ms }}"},
+        {"value": "StaleNaN", "timestamp": "{{ now_minus_10s_ms }}"},
+        {"value": 43, "timestamp": "{{ now_ms }}"}
+      ]
+    }
+  ]
+}

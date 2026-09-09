@@ -1,0 +1,32 @@
+id: remote-write/same-timestamp-different-value
+protocol: remote-write
+title: Two different values at one timestamp in one series
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: samples
+  text: >
+    A series holds one value per timestamp, so a request carrying two is
+    self-contradictory and the specification does not say which wins. Refusing
+    is conformant. Keeping one is conformant. Which one a store keeps is not
+    specified, and stores disagree, so it is recorded rather than judged.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/same-timestamp-different-value.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: present
+    series: specmatrix_duplicate_sample_gauge
+    on:
+      - field: value
+        as: float
+
+notes: >
+  A candidate for adjudication rather than for a verdict: two stores keeping
+  different values are both defensible until someone asks the specification
+  owners which is intended.

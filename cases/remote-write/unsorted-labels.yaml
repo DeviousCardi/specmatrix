@@ -1,0 +1,30 @@
+id: remote-write/unsorted-labels
+protocol: remote-write
+title: Labels sent out of order are either refused or kept, not silently dropped
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: labels
+  text: >
+    Senders MUST send label pairs sorted by name. The specification does not
+    say what a receiver does when they are not, so refusing the request and
+    accepting it are both conformant. What is not conformant is accepting the
+    request and losing labels, because the caller was told the write succeeded.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/unsorted-labels.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: exact
+    series: specmatrix_unsorted_gauge
+    on: [labels]
+
+notes: >
+  Labels are compared as a set, which is the right comparison for this check:
+  the question is which labels survived, not what order a store returns them
+  in. A store that sorts them on the way in has done nothing wrong.

@@ -1,0 +1,14 @@
+{
+  "timeseries": [
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_duplicate_sample_gauge"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [
+        {"value": 1, "timestamp": "{{ now_ms }}"},
+        {"value": 2, "timestamp": "{{ now_ms }}"}
+      ]
+    }
+  ]
+}

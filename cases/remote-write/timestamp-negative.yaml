@@ -1,0 +1,27 @@
+id: remote-write/timestamp-negative
+protocol: remote-write
+title: A timestamp before the Unix epoch
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: samples
+  text: >
+    A Sample timestamp is an int64 of milliseconds since the epoch. The type is
+    signed, so a negative value is representable and the specification does not
+    exclude it. A store that treats the field as unsigned reads -1000 as an
+    instant in the year 292 million.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/timestamp-negative.json
+
+expect:
+  ingest: accepted-or-rejected
+
+notes: >
+  No read-back: a negative timestamp is outside any query window the runner
+  could reasonably ask for, so absence here would say nothing. What the case
+  catches is the answer at the door, and specifically a store that reports a
+  crash or a 500 rather than a refusal.

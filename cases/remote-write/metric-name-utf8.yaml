@@ -1,0 +1,32 @@
+id: remote-write/metric-name-utf8
+protocol: remote-write
+title: A metric name containing dots is refused or kept, not renamed
+
+rule:
+  basis: spec
+  spec: prometheus/data-model
+  section: metric-names
+  text: >
+    Under the legacy scheme a metric name must match [a-zA-Z_:][a-zA-Z0-9_:]*,
+    so dots are invalid. Prometheus 3 permits any valid UTF-8 name. OpenTelemetry
+    metric names contain dots as a matter of course, so a receiver bridging the
+    two has to do something with them, and what it does is worth recording.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/metric-name-utf8.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: present
+    series: specmatrix.utf8.gauge
+    on: [labels]
+
+notes: >
+  The read-back selector uses the quoted form, which is how PromQL names a
+  metric whose name is not a legacy identifier. A store that renamed the metric
+  — dots to underscores, say — reads as never queryable under the name it was
+  sent, which is the divergence: the data is there under a name the sender does
+  not know.

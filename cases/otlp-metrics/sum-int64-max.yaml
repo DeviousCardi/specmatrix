@@ -1,0 +1,44 @@
+id: otlp-metrics/sum-int64-max
+protocol: otlp-metrics
+title: A monotonic sum at the largest int64
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.3.0
+  section: number-data-point
+  text: >
+    `as_int` is an sfixed64 and OTLP's JSON mapping writes it as a string,
+    precisely because a JSON number cannot hold every int64 exactly. A store
+    whose metric values are doubles cannot represent 9223372036854775807, so
+    some loss is expected; what it does with it is worth recording.
+
+send:
+  format: otlp-metrics-json
+  encodings: [otlp-metrics-json, otlp-metrics-protobuf]
+  body: cases/otlp-metrics/sum-int64-max.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    series: specmatrix_otlp_bigsum
+    # A regex over both names this metric can be filed under, because the
+    # translation is not the same everywhere. A monotonic OTLP sum becomes a
+    # Prometheus counter and the compatibility specification says to append
+    # `_total`; Prometheus 3.14.0 and GreptimeDB 1.2.0 do, while Mimir 3.2.0 and
+    # VictoriaMetrics 1.151.0 do not — Mimir has a setting for it,
+    # otel_metric_suffixes_enabled, off by default.
+    #
+    # Pinning either spelling would report half the columns as having lost the
+    # metric, which is a much more alarming claim than the true one. The naming
+    # difference has its own row in unit-suffix-on-metric-name; this row is
+    # about the value, so its selector accepts both.
+    stored_as: '{__name__=~"specmatrix_otlp_bigsum(_total)?",specmatrix_run="{{ run_key }}"}'
+    on:
+      - field: value
+        as: float
+
+notes: >
+  Recorded rather than judged, like remote-write/counter-u64-max. The loss is a
+  property of a float-valued store and not a fault; the row exists so a reader
+  can see whether the stores agree on the rounded value.

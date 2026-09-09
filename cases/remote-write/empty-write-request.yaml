@@ -1,0 +1,26 @@
+id: remote-write/empty-write-request
+protocol: remote-write
+title: A WriteRequest with no timeseries is accepted
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: write-request
+  text: >
+    `timeseries` is a repeated field, so zero of them is a valid WriteRequest.
+    A sender whose queue drained between batches emits one as ordinary traffic,
+    and a receiver that errors on it turns a normal event into an alert.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/empty-write-request.json
+
+expect:
+  ingest: accepted
+
+notes: >
+  The remote-write twin of otlp-logs/empty-batch, which found a 500 in Quickwit
+  on the same shape. The encoded message is zero bytes; snappy still wraps it,
+  so the body is not empty and a receiver rejecting it is rejecting something
+  its own encoder produces.

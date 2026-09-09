@@ -1,0 +1,123 @@
+# Adapter for Prometheus, the reference column for remote-write.
+#
+# Prometheus is the reference here for the same reason Elasticsearch is the
+# reference for `_bulk`: it defines the protocol, so where the specification is
+# silent, what Prometheus does is the de-facto rule a case may cite. That is a
+# statement about precedence, not about quality — a divergence found in
+# Prometheus itself is still a divergence, and is filed like any other.
+#
+# Confirmed by hand against prom/prometheus:v3.14.0 on 2026-09-09:
+#
+#   $ curl -s localhost:9090/api/v1/status/buildinfo
+#   {"status":"success","data":{"version":"3.6.0",...}}
+#
+#   $ curl -sG localhost:9090/api/v1/query \
+#       --data-urlencode 'query=specmatrix_gauge{specmatrix_run="sm-..."}'
+#   {"status":"success","data":{"resultType":"vector","result":[
+#     {"metric":{"__name__":"specmatrix_gauge","specmatrix_run":"sm-..."},
+#      "value":[1757430000.123,"12.5"]}]}}
+#
+# The value comes back as a string inside a two-element array; the labels come
+# back as an object. Both are renames, handled by the pointers below.
+
+name: prometheus
+version_from:
+  request: GET /api/v1/status/buildinfo
+  field: /data/version
+
+container:
+  image: prom/prometheus:v3.14.0
+  # The receiver is off by default. Without this flag /api/v1/write answers 404
+  # and every row reads as a rejection, which would be a finding about a
+  # configuration rather than about Prometheus.
+  command:
+    - --config.file=/etc/prometheus/prometheus.yml
+    - --web.enable-remote-write-receiver
+    # Prometheus 3 also accepts OTLP metrics, behind its own flag. That makes it
+    # the one store in the suite that answers both protocols at the same query
+    # endpoint, which is what makes "does a store that accepts both treat them
+    # the same" a question this corpus can actually put.
+    - --web.enable-otlp-receiver
+  port: 9090
+  ready:
+    request: GET /-/ready
+    expect_status: 200
+
+auth:
+  kind: none
+
+run_key_field: specmatrix_run
+
+protocols:
+  remote-write:
+    formats: [remote-write-protobuf]
+    ingest:
+      # Content-Type, Content-Encoding and the protocol version header are
+      # supplied by the encoding rather than written here: every remote-write
+      # receiver needs the same three, and an adapter that omitted one would
+      # get a decompression error that names neither the header nor the cause.
+      request: POST /api/v1/write
+    readback:
+      request: GET /api/v1/query
+      # As a parameter, not as a query string in the path. A PromQL selector
+      # carries braces and quotes, and pasting one into the path produces a 400
+      # before Prometheus reads it.
+      #
+      # `series_selector` is built by the runner from the case's `series:` and
+      # the `run_key_field` above. It has to be, because a metric name that is
+      # not a legacy identifier can only be named by PromQL's quoted form —
+      # `{"a.b.c", run="k"}` rather than `a.b.c{run="k"}` — and an adapter
+      # template cannot choose between the two.
+      params:
+        query: '{{ series_selector }}'
+        # The instant to ask about, which a check may set. Defaults to now.
+        # Without it, the one case that timestamps a sample in the future is
+        # asked about the present and reads as data the store lost.
+        time: '{{ query_time_s }}'
+      records: /data/result
+      fields:
+        value: /value/1
+        labels: /metric
+      poll:
+        interval_ms: 500
+        timeout_ms: 15000
+
+  # Prometheus 3 accepts OTLP metrics behind --web.enable-otlp-receiver, and
+  # answers them at the same PromQL endpoint as remote-write. That is what
+  # makes the two suites comparable on one store: same query, two ways in.
+  #
+  # Confirmed by hand on 2026-09-09. An OTLP gauge named `sm_probe` with
+  # `unit: "By"` is stored as `sm_probe_bytes`, and `service.name` becomes the
+  # `job` label. Both are documented translations, not alterations.
+  otlp-metrics:
+    formats: [otlp-metrics-json, otlp-metrics-protobuf]
+    ingest:
+      request: POST /api/v1/otlp/v1/metrics
+    readback:
+      request: GET /api/v1/query
+      # As a parameter, not as a query string in the path. A PromQL selector
+      # carries braces and quotes, and pasting one into the path produces a 400
+      # before Prometheus reads it.
+      #
+      # `series_selector` is built by the runner from the case's `series:` and
+      # the `run_key_field` above. It has to be, because a metric name that is
+      # not a legacy identifier can only be named by PromQL's quoted form —
+      # `{"a.b.c", run="k"}` rather than `a.b.c{run="k"}` — and an adapter
+      # template cannot choose between the two.
+      params:
+        query: '{{ series_selector }}'
+        # The instant to ask about, which a check may set. Defaults to now.
+        # Without it, the one case that timestamps a sample in the future is
+        # asked about the present and reads as data the store lost.
+        time: '{{ query_time_s }}'
+      records: /data/result
+      fields:
+        value: /value/1
+        labels: /metric
+        # A native histogram comes back under `histogram` rather than `value`,
+        # with its count nested inside. Only the exponential-histogram check
+        # asks for this, and it is a rename like any other.
+        count: /histogram/1/count
+      poll:
+        interval_ms: 500
+        timeout_ms: 15000

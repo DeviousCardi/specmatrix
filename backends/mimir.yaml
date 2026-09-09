@@ -1,0 +1,107 @@
+# Adapter for Grafana Mimir, single-binary mode.
+#
+# Confirmed by hand against grafana/mimir:3.2.0 on 2026-09-09:
+#
+#   $ curl -s localhost:9009/prometheus/api/v1/status/buildinfo
+#   {"status":"success","data":{"application":"Grafana Mimir","version":"2.17.1",...}}
+#
+# Mimir writes at /api/v1/push, not /api/v1/write, and answers PromQL under a
+# /prometheus prefix. Both are renames of the same protocol and belong here
+# rather than in the corpus.
+#
+# Multitenancy is switched off rather than sending X-Scope-OrgID on every
+# request. Two reasons, and neither is convenience: the version probe does not
+# carry adapter headers, so a tenant header would leave the column without a
+# version; and a single-tenant deployment is a supported Mimir configuration,
+# so nothing about how it handles a payload is changed by it.
+#
+# Everything else is configured on the command line because the adapter has no
+# way to mount a file, and a column that cannot be started from the repository
+# alone is not reproducible. `-target=all` is Mimir's single-binary mode; the
+# replication factors are 1 because there is one instance.
+
+name: mimir
+version_from:
+  request: GET /prometheus/api/v1/status/buildinfo
+  field: /data/version
+
+container:
+  image: grafana/mimir:3.2.0
+  command:
+    - -target=all
+    - -auth.multitenancy-enabled=false
+    - -server.http-listen-port=9009
+    - -blocks-storage.backend=filesystem
+    - -blocks-storage.filesystem.dir=/tmp/mimir/blocks
+    - -blocks-storage.bucket-store.sync-dir=/tmp/mimir/sync
+    - -blocks-storage.tsdb.dir=/tmp/mimir/tsdb
+    - -ruler-storage.backend=filesystem
+    - -ruler-storage.filesystem.dir=/tmp/mimir/ruler
+    - -alertmanager-storage.backend=filesystem
+    - -alertmanager-storage.filesystem.dir=/tmp/mimir/am
+    - -alertmanager.storage.path=/tmp/mimir/am-local
+    - -compactor.data-dir=/tmp/mimir/compactor
+    - -ingester.ring.replication-factor=1
+    - -ingester.ring.instance-addr=127.0.0.1
+    - -store-gateway.sharding-ring.replication-factor=1
+    - -ingester.ring.store=memberlist
+  port: 9009
+  ready:
+    # /ready answers 503 until every component is ACTIVE in the ring, which
+    # took about twelve seconds when this was measured. The probe is the right
+    # place for that wait; a settle_ms would be guessing at it.
+    request: GET /ready
+    expect_status: 200
+
+auth:
+  kind: none
+
+run_key_field: specmatrix_run
+
+protocols:
+  remote-write:
+    formats: [remote-write-protobuf]
+    ingest:
+      request: POST /api/v1/push
+    readback:
+      request: GET /prometheus/api/v1/query
+      params:
+        query: '{{ series_selector }}'
+        # The instant to ask about, which a check may set. Defaults to now.
+        # Without it, the one case that timestamps a sample in the future is
+        # asked about the present and reads as data the store lost.
+        time: '{{ query_time_s }}'
+      records: /data/result
+      fields:
+        value: /value/1
+        labels: /metric
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000
+
+  # Confirmed by hand on 2026-09-09: Mimir accepts OTLP JSON directly, and does
+  # not append unit suffixes to metric names — `sm_probe` with `unit: "By"`
+  # stays `sm_probe`, where Prometheus stores `sm_probe_bytes`.
+  otlp-metrics:
+    formats: [otlp-metrics-json, otlp-metrics-protobuf]
+    ingest:
+      request: POST /otlp/v1/metrics
+    readback:
+      request: GET /prometheus/api/v1/query
+      params:
+        query: '{{ series_selector }}'
+        # The instant to ask about, which a check may set. Defaults to now.
+        # Without it, the one case that timestamps a sample in the future is
+        # asked about the present and reads as data the store lost.
+        time: '{{ query_time_s }}'
+      records: /data/result
+      fields:
+        value: /value/1
+        labels: /metric
+        # A native histogram comes back under `histogram` rather than `value`,
+        # with its count nested inside. Only the exponential-histogram check
+        # asks for this, and it is a rename like any other.
+        count: /histogram/1/count
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000

@@ -1,0 +1,11 @@
+{
+  "timeseries": [
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_precise_gauge"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": 1234567890.1234567, "timestamp": "{{ now_ms }}"}]
+    }
+  ]
+}

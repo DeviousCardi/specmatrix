@@ -1,0 +1,42 @@
+id: otlp-metrics/data-point-without-attributes
+protocol: otlp-metrics
+title: A data point with no attributes is still a data point
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.3.0
+  section: number-data-point
+  text: >
+    `attributes` is optional on a data point. A metric with no dimensions is
+    ordinary — a process-wide gauge has none — and must not be dropped for
+    having an empty attribute list.
+
+send:
+  format: otlp-metrics-json
+  encodings: [otlp-metrics-json, otlp-metrics-protobuf]
+  body: cases/otlp-metrics/data-point-without-attributes.json
+
+expect:
+  ingest: accepted
+  readback:
+    # Only the witness is asserted, and the reason is a real limit rather than
+    # an oversight. Read-back finds this run's record by its run key; a data
+    # point with no attributes carries no run label, so there is no way to tell
+    # the point this export sent from one an earlier run sent. Asserting on it
+    # would be asserting on whichever happened to be there.
+    #
+    # What the check still catches is the failure that matters: a store that
+    # refuses or drops the whole export because one point has no attributes.
+    # The witness is in the same export, so if the attribute-free point poisons
+    # it, the witness goes missing too.
+    match: present
+    series: specmatrix_otlp_noattrs_witness
+    on:
+      - field: value
+        as: float
+
+notes: >
+  The attribute-free point is found by name rather than by run key, so a rerun
+  sees the previous run's point too. That is acceptable here because the
+  assertion is that the metric exists at all, and it is why this row is
+  `present` rather than `exact`.

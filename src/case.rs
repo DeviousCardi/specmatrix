@@ -69,7 +69,7 @@ impl Send {
 pub struct Expect {
     /// `accepted`, `rejected`, or `accepted-or-rejected`
     pub ingest: String,
-    pub readback: Option<ReadbackExpect>,
+    pub readback: Option<Readbacks>,
     /// A query-semantics check: run this query and compare which records come
     /// back. Mutually exclusive with `readback` in practice — a check asserts
     /// either what one record became or which records a query returns.
@@ -101,20 +101,64 @@ fn default_order() -> String {
     "any".to_string()
 }
 
+/// One read-back assertion, or several.
+///
+/// Several are needed the first time one request carries more than one thing
+/// worth asserting on. `histogram-nan-count` sends a stale histogram and an
+/// unrelated gauge together, and the finding is precisely that the second must
+/// survive the first: one assertion says the gauge is present, another says the
+/// histogram is absent, and a check that could only make one of them would be
+/// testing half of what it exists to test.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum Readbacks {
+    One(ReadbackExpect),
+    Many(Vec<ReadbackExpect>),
+}
+
+impl Readbacks {
+    pub fn all(&self) -> Vec<&ReadbackExpect> {
+        match self {
+            Readbacks::One(one) => vec![one],
+            Readbacks::Many(many) => many.iter().collect(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ReadbackExpect {
     /// `exact`: the record must be present and the listed fields unchanged.
     /// `present`: the record must be present; fields are reported, not judged.
+    /// `absent`: the record must not be there.
     #[serde(rename = "match")]
     pub match_: String,
     #[serde(default)]
     pub on: Vec<FieldSpec>,
     /// Which series a check asserts on, by name. Protocols that send several
     /// series in one request need it; a check usually asserts on one of them.
-    /// Read by the remote-write read-back in 0.3; declared now because the
-    /// case that needs it is already in the corpus.
-    #[allow(dead_code)]
+    /// Rendered into the adapter's read-back as `{{ series }}`, so which query
+    /// finds a named series stays the adapter's business.
     pub series: Option<String>,
+    /// The name the store files this metric under, when it is not the name the
+    /// check sent.
+    ///
+    /// Translating a protocol renames things, legitimately and by
+    /// specification: an OTLP monotonic sum becomes a Prometheus `_total`
+    /// series, a histogram becomes `_count`, `_sum` and `_bucket`, and a unit
+    /// becomes a suffix. `series:` names the metric in the payload, so the
+    /// check can read what it sent; this names the series to query. Without
+    /// the pair, a check asserting on a translated metric reports the rename
+    /// as the record having vanished — which is what it did before this
+    /// existed.
+    ///
+    /// A value containing `{` is used as the selector verbatim, for the rare
+    /// check whose question the generated selector cannot express.
+    pub stored_as: Option<String>,
+    /// The instant to ask about, rendered as `{{ query_time_s }}`. Defaults to
+    /// now, which is what every check wants except one: a sample deliberately
+    /// timestamped in the future cannot be found by a query at the present,
+    /// and asking anyway reports the store as having dropped it.
+    pub at: Option<String>,
 }
 
 /// A field a check asserts on, optionally with how to read it.

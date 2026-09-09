@@ -1,0 +1,50 @@
+id: remote-write/stale-marker-hides-series
+protocol: remote-write
+title: A stale marker ends the series and later queries return nothing
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: staleness
+  text: >
+    A sender marks a series stale by writing a sample carrying the reserved NaN
+    payload 0x7ff0000000000002. A receiver that honours it treats the series as
+    ended at that timestamp, so an instant query after it returns no result. A
+    receiver that stores the marker as an ordinary value instead reports NaN
+    where there should be nothing, which a dashboard renders as a gap in a
+    series that is still considered live.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/stale-marker-hides-series.json
+
+expect:
+  ingest: accepted
+  readback:
+    # The witness first, and the order is load-bearing. A store that has not
+    # caught up yet answers "nothing here" to every query, so an absence check
+    # run on its own passes for the wrong reason. The witness is an ordinary
+    # series in the same request at the same timestamp: once it is queryable,
+    # the store has demonstrably seen this write, and only then does the
+    # absence of the stale series mean anything.
+    #
+    # This is not hypothetical. VictoriaMetrics defaults to a 30s
+    # search.latencyOffset, so an instant query cannot see the last half minute
+    # of data at all, and without the witness this case would have reported it
+    # as honouring a stale marker it had not yet read.
+    - match: present
+      series: specmatrix_stale_witness
+      on:
+        - field: value
+          as: float
+    - match: absent
+      series: specmatrix_stale_gauge
+
+notes: >
+  The marker is the specific payload, not any NaN. Confirmed against
+  prom/prometheus:v3.6.0 on 2026-09-09: an ordinary NaN sample is stored and
+  reads back as "NaN", while this one ends the series and the instant query
+  returns an empty result. Sending an ordinary NaN here would test nothing —
+  every store that keeps the value would look like one that ignored a marker it
+  was never sent.

@@ -1,0 +1,18 @@
+{
+  "timeseries": [
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_later_gauge"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": 2, "timestamp": "{{ now_ms }}"}]
+    },
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_earlier_gauge"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": [{"value": 1, "timestamp": "{{ now_minus_10s_ms }}"}]
+    }
+  ]
+}

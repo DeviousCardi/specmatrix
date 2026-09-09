@@ -1,0 +1,51 @@
+id: otlp-metrics/histogram-no-buckets
+protocol: otlp-metrics
+title: A histogram with a count and a sum but no buckets
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.3.0
+  section: histogram-data-point
+  text: >
+    `bucket_counts` and `explicit_bounds` are both optional, and a histogram
+    data point carrying only `count` and `sum` is conformant — it is what an
+    SDK configured with an empty bucket boundary list produces. A receiver that
+    indexes bucket_counts[0] on such a point fails on ordinary traffic.
+  observed:
+    - https://github.com/VictoriaMetrics/VictoriaMetrics/issues/11528
+
+send:
+  format: otlp-metrics-json
+  encodings: [otlp-metrics-json, otlp-metrics-protobuf]
+  body: cases/otlp-metrics/histogram-no-buckets.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    series: specmatrix_otlp_nobuckets
+    # An OTLP histogram becomes three Prometheus series. The count is the one
+    # this check asserts on, and it is stored under a name the export never
+    # used.
+    stored_as: specmatrix_otlp_nobuckets_count
+    on:
+      - field: value
+        as: float
+
+notes: >
+  Read back under the _count suffix a Prometheus-shaped store files a histogram
+  under, which is itself part of what this checks: a store that kept the point
+  but exposed no _count series has stored something a caller cannot query.
+
+  Measured 2026-09-09:
+
+    prometheus 3.14.0        PASS   keeps _count and _sum
+    mimir 3.2.0              PASS   keeps _count, _sum and an empty _bucket
+    greptimedb 1.2.0         PASS   keeps _count and _sum
+    victoriametrics 1.151.0  ALTER  keeps nothing
+
+  Confirmed with a control in the same export: a gauge and an ordinary
+  histogram sent alongside land in VictoriaMetrics normally, so the export was
+  read and only this data point was discarded — along with its count and sum,
+  which have nothing to do with the missing buckets. 200, no counter, no log.
+  Filed as VictoriaMetrics#11528.

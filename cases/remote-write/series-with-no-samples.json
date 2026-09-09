@@ -1,0 +1,11 @@
+{
+  "timeseries": [
+    {
+      "labels": [
+        {"name": "__name__", "value": "specmatrix_no_samples_gauge"},
+        {"name": "specmatrix_run", "value": "{{ run_key }}"}
+      ],
+      "samples": []
+    }
+  ]
+}

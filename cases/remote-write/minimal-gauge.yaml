@@ -1,0 +1,35 @@
+id: remote-write/minimal-gauge
+protocol: remote-write
+title: An ordinary gauge sample is written and reads back unchanged
+control: true
+
+rule:
+  basis: spec
+  spec: prometheus/remote-write/1.0
+  section: write-request
+  text: >
+    A WriteRequest carries timeseries, each a set of labels and a set of
+    samples. One series with one finite sample is the smallest conformant
+    request there is.
+
+send:
+  format: remote-write-json
+  encodings: [remote-write-protobuf]
+  body: cases/remote-write/minimal-gauge.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    series: specmatrix_gauge
+    on:
+      - field: value
+        as: float
+      - labels
+
+notes: >
+  The control for the remote-write suite. It says nothing about the protocol
+  and everything about the adapter: that the encoder produces a body the
+  receiver accepts, that the three required headers are on the request, and
+  that the read-back query finds this run by its label. Until it passes, no
+  other row in the suite is a statement about the backend.
