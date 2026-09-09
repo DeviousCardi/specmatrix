@@ -1,0 +1,27 @@
+id: otlp-traces/span-without-parent
+protocol: otlp-traces
+title: A span with no parentSpanId is a root span, not malformed
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/trace/v1
+  section: Span.parent_span_id
+  text: >
+    The parent_span_id of this span's parent span. If this is a root span,
+    then this field must be empty. A span omitting the field entirely, which
+    is what an SDK's root span produces, is exactly this case.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/span-without-parent.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [name]
+
+notes: >
+  A store that refuses a span for lacking a parent, or invents one, fails a
+  case that is ordinary traffic: every trace has exactly one root span.

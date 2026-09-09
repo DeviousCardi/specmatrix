@@ -31,6 +31,14 @@ pub fn check_pinned(container: &Container) -> Result<()> {
     Ok(())
 }
 
+/// Where an inline `container.config` is written before the container starts.
+/// Fixed rather than derived from the backend name: `down` never needs to
+/// know it, and a stale file from a previous run is overwritten, not
+/// accumulated.
+fn config_host_path(backend: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("specmatrix-{backend}-config.yaml"))
+}
+
 pub fn docker_run_args(backend: &str, container: &Container) -> Vec<String> {
     let mut args = vec![
         "run".to_string(),
@@ -40,6 +48,14 @@ pub fn docker_run_args(backend: &str, container: &Container) -> Vec<String> {
         "-p".to_string(),
         format!("{0}:{0}", container.port),
     ];
+    for port in &container.extra_ports {
+        args.push("-p".to_string());
+        args.push(format!("{port}:{port}"));
+    }
+    if container.config.is_some() {
+        args.push("-v".to_string());
+        args.push(format!("{}:/etc/specmatrix/config.yaml", config_host_path(backend).display()));
+    }
     // Sorted, so two runs of one adapter produce the same command line and a
     // difference in a log is a real difference.
     let mut env: Vec<_> = container.env.iter().collect();
@@ -57,6 +73,10 @@ pub fn docker_run_args(backend: &str, container: &Container) -> Vec<String> {
 pub fn up(backend: &str, container: &Container) -> Result<String> {
     check_pinned(container)?;
     let _ = down(backend);
+    if let Some(config) = &container.config {
+        std::fs::write(config_host_path(backend), config)
+            .context("writing the adapter's inline config to a temp file")?;
+    }
     let output = Command::new("docker")
         .args(docker_run_args(backend, container))
         .output()
@@ -79,16 +99,26 @@ fn wait_ready(base_url: &str, request: &str, expect_status: u16) -> Result<()> {
     let (_, path) = request
         .split_once(' ')
         .with_context(|| format!("ready.request must be `METHOD /path`, got {request:?}"))?;
+    let path = path.trim();
+    // An absolute URL is used as written, same as `send()` does for a
+    // read-back on a store's other port — Tempo's readiness is its query
+    // API on 3200, a different port than the OTLP receiver `container.port`
+    // points `base_url` at.
+    let url = if path.starts_with("http://") || path.starts_with("https://") {
+        path.to_string()
+    } else {
+        format!("{base_url}{path}")
+    };
     let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(2)).build()?;
     let deadline = Instant::now() + Duration::from_secs(180);
     loop {
-        if let Ok(response) = client.get(format!("{base_url}{}", path.trim())).send() {
+        if let Ok(response) = client.get(&url).send() {
             if response.status().as_u16() == expect_status {
                 return Ok(());
             }
         }
         if Instant::now() >= deadline {
-            anyhow::bail!("{base_url}{} did not return {expect_status} within 180s", path.trim());
+            anyhow::bail!("{url} did not return {expect_status} within 180s");
         }
         std::thread::sleep(Duration::from_millis(500));
     }
@@ -155,6 +185,37 @@ env:
         let image = args.iter().position(|a| a == "quay.io/parseablehq/parseable:v2.9.4");
         let command = args.iter().position(|a| a == "local-store");
         assert!(image < command, "{args:?}");
+    }
+
+    /// A store that answers ingest and query on two ports of one container
+    /// needs both published, or its own cross-port read-back has nothing to
+    /// reach.
+    #[test]
+    fn extra_ports_are_published_alongside_the_main_one() {
+        let c: Container =
+            serde_yaml::from_str("image: x/y:1\nport: 4318\nextra_ports: [16686]\n").unwrap();
+        let args = docker_run_args("x", &c);
+        assert!(args.windows(2).any(|w| w[0] == "-p" && w[1] == "4318:4318"), "{args:?}");
+        assert!(args.windows(2).any(|w| w[0] == "-p" && w[1] == "16686:16686"), "{args:?}");
+    }
+
+    /// No `config:` means no mount at all, so every adapter written before
+    /// this existed runs unchanged.
+    #[test]
+    fn no_config_means_no_volume_mount() {
+        let args = docker_run_args("parseable", &parseable());
+        assert!(!args.iter().any(|a| a == "-v"), "{args:?}");
+    }
+
+    /// An inline config is mounted at the fixed path every adapter's own
+    /// `command` can point a flag at.
+    #[test]
+    fn an_inline_config_is_mounted_at_the_fixed_path() {
+        let c: Container =
+            serde_yaml::from_str("image: x/y:1\nport: 1\nconfig: |\n  key: value\n").unwrap();
+        let args = docker_run_args("x", &c);
+        let at = args.iter().position(|a| a == "-v").expect("-v present");
+        assert!(args[at + 1].ends_with(":/etc/specmatrix/config.yaml"), "{}", args[at + 1]);
     }
 
     /// A settle is optional and defaults to none, so no adapter waits for a

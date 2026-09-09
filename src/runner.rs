@@ -284,7 +284,12 @@ impl Runner {
         // difference between a loud failure and a silent one — which is the
         // distinction this project exists to draw.
         let reported = if case.protocol.starts_with("otlp") {
-            crate::otlp::export_report(&encoding, response.content_type.as_deref(), &response.body)
+            crate::otlp::export_report(
+                &case.protocol,
+                &encoding,
+                response.content_type.as_deref(),
+                &response.body,
+            )
         } else {
             None
         };
@@ -530,6 +535,22 @@ impl Runner {
         let stream = format!("specmatrix_{}", case.id.replace(['/', '-', '.'], "_").to_lowercase());
         let mut vars = Vars::new();
         vars.insert("run_key", run_key);
+        // The run key for the traces protocol: sixteen random bytes, hex
+        // encoded, valid as a trace_id on the wire. Traces have no attribute
+        // equivalent to `specmatrix.run` that every backend indexes the same
+        // way — a trace is found by its trace id, full stop — so this is what
+        // a case's read-back and `{{ trace_id_hex }}` in a payload both use.
+        let trace_id: [u8; 16] = rand::random();
+        vars.insert(
+            "trace_id_hex",
+            trace_id.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+        );
+        // Some stores echo a trace id in the OTLP JSON mapping's own encoding
+        // for a bytes field, base64, rather than the hex this project's
+        // payloads write it in — confirmed on Tempo. `read_back` tries both,
+        // since a store's own choice of encoding is not the divergence any
+        // check here is looking for.
+        vars.insert("trace_id_base64", base64_encode(&trace_id));
         vars.insert("suite_stream", stream);
         if let Some(field) = self.backend.run_key_field.clone() {
             vars.insert("run_key_field", field);
@@ -543,7 +564,19 @@ impl Runner {
 
     fn send(&self, req: &Request, vars: &Vars, body: Vec<u8>) -> Result<Response> {
         let (method, path) = req.parts()?;
-        let url = format!("{}{}", self.base_url, template::render(&path, vars));
+        let rendered_path = template::render(&path, vars);
+        // A request whose path is already a full URL is used as written rather
+        // than appended to the base URL. Several stores split ingest and
+        // query across two ports on the one container — Jaeger's OTLP
+        // receiver and its query API, Tempo's OTLP receiver and its query
+        // API — and the base URL can only be one of them, whichever
+        // `specmatrix up` reports. A read-back on the other port has to name
+        // it outright.
+        let url = if rendered_path.starts_with("http://") || rendered_path.starts_with("https://") {
+            rendered_path
+        } else {
+            format!("{}{}", self.base_url, rendered_path)
+        };
         let mut builder = match method.as_str() {
             "POST" => self.client.post(&url),
             "PUT" => self.client.put(&url),
@@ -694,7 +727,17 @@ impl Runner {
     /// Most backends acknowledge a write before it is queryable, so a single
     /// immediate read would report every backend as dropping data.
     fn read_back(&self, readback: &Readback, vars: &Vars) -> Result<ReadOutcome> {
+        // The marker a record is found by. `run_key` is what every protocol
+        // except traces carries: a case sends it as an attribute or a label,
+        // and it is what disambiguates our record from anything else the
+        // store holds. A trace has no such field — it is found by its trace
+        // id or not at all — so a response is also accepted if it carries
+        // `trace_id_hex` instead. Neither is a plausible false match: both are
+        // random per case, and a response containing one that is not ours
+        // would be a collision astronomically unlikely to occur by chance.
         let run_key = vars.get("run_key").cloned().unwrap_or_default();
+        let trace_id = vars.get("trace_id_hex").cloned().unwrap_or_default();
+        let trace_id_b64 = vars.get("trace_id_base64").cloned().unwrap_or_default();
         let deadline = Instant::now() + Duration::from_millis(readback.poll.timeout_ms);
         // Tracks whether every poll's response body failed to parse at all, as
         // opposed to parsing fine and simply not containing the record yet.
@@ -715,7 +758,10 @@ impl Runner {
             if let Ok(response) = self.send_declared(&readback.request, vars) {
                 if let Some(value) = parse_response_body(&response.body) {
                     ever_parsed = true;
-                    if let Some(record) = first_record(&value, &readback.records, &run_key) {
+                    let record = first_record(&value, &readback.records, &run_key)
+                        .or_else(|| first_record(&value, &readback.records, &trace_id))
+                        .or_else(|| first_record(&value, &readback.records, &trace_id_b64));
+                    if let Some(record) = record {
                         return Ok(ReadOutcome::Found(record));
                     }
                 }
@@ -739,7 +785,40 @@ impl Runner {
         if let Some(pointer) = readback.fields.get(field) {
             return record.pointer(pointer).cloned();
         }
-        record.get(field).cloned()
+        if let Some(key) = field.strip_prefix("attributes.") {
+            // An adapter's `fields:` maps one flat pointer per name, and an
+            // attribute key is not one — it lives at a variable index in
+            // whichever array a store nested it under. Tried only when the
+            // adapter declared no mapping for this exact field name, so an
+            // adapter that flattens attributes onto top-level columns (most
+            // do) can still name them individually and this fallback never
+            // runs for it. Where it does apply, it is OTLP's own shape: an
+            // `attributes` array of `{key, value}` pairs, which is what a
+            // store that echoes real OTLP JSON — Tempo, here — returns.
+            if let Some(found) = record
+                .get("attributes")
+                .and_then(|attrs| attrs.as_array())
+                .and_then(|attrs| {
+                    attrs.iter().find(|kv| kv.get("key").and_then(|k| k.as_str()) == Some(key))
+                })
+                .and_then(|kv| kv.get("value"))
+            {
+                return crate::otlp::any_value(found);
+            }
+        }
+        if let Some(value) = record.get(field) {
+            return Some(value.clone());
+        }
+        // A dotted path with no adapter mapping — `events.0.timeUnixNano` — is
+        // read as a JSON pointer, the same shape OTLP's own JSON already is.
+        // Only tried once the plain top-level lookup above has failed, so a
+        // backend that genuinely names a field with a literal dot in it (rare,
+        // but `service.name`-style keys exist) is read literally first.
+        if field.contains('.') {
+            let pointer = format!("/{}", field.replace('.', "/"));
+            return record.pointer(&pointer).cloned();
+        }
+        None
     }
 
     fn authenticate(
@@ -838,6 +917,7 @@ fn logical_field_for(
         "remote-write" => crate::remote_write::logical_field(sent, field, series),
         "otlp-metrics" => crate::otlp::metric_field(sent, field, series),
         "loki-push" => crate::loki::logical_field(sent, field),
+        "otlp-traces" => crate::otlp::span_field(sent, field),
         _ => crate::otlp::logical_field(sent, field),
     }
 }
@@ -977,6 +1057,14 @@ fn first_record(
     records_pointer: &str,
     run_key: &str,
 ) -> Option<serde_json::Value> {
+    // An empty key is never a marker, only a caller's unset default —
+    // `.contains("")` is true of every string, so matching on one would
+    // return the first record regardless of whether it is ours. This has
+    // already been the actual bug once, when a second marker was wired
+    // through `unwrap_or_default()` before anything set it.
+    if run_key.is_empty() {
+        return None;
+    }
     let node = if records_pointer.is_empty() { value } else { value.pointer(records_pointer)? };
     let items: Vec<&serde_json::Value> = match node {
         serde_json::Value::Array(items) => items.iter().collect(),
@@ -1005,12 +1093,51 @@ fn parse_sent(bytes: &[u8]) -> (serde_json::Value, bool) {
     (serde_json::from_str(&lossy).unwrap_or(serde_json::Value::Null), true)
 }
 
+/// Standard base64, no crate needed for sixteen bytes. Some stores encode a
+/// trace id in OTLP JSON's own mapping for a `bytes` field, which is base64,
+/// rather than the hex this project's payloads use — read-back needs both.
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ALPHABET[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 fn first_line(text: &str) -> String {
     let line = text.lines().next().unwrap_or("").trim();
     if line.len() > 120 {
         format!("{}…", &line[..120])
     } else {
         line.to_string()
+    }
+}
+
+#[cfg(test)]
+mod base64_tests {
+    use super::base64_encode;
+
+    #[test]
+    fn encodes_sixteen_bytes_with_the_two_padding_characters_that_length_needs() {
+        let bytes: [u8; 16] = [
+            0x12, 0xca, 0xb4, 0xb4, 0xf3, 0xf2, 0x4a, 0xf6, 0xac, 0xf3, 0x82, 0x72, 0x92, 0x50,
+            0xf2, 0xa6,
+        ];
+        assert_eq!(base64_encode(&bytes), "Esq0tPPySvas84JyklDypg==");
+    }
+
+    #[test]
+    fn an_empty_slice_encodes_to_an_empty_string() {
+        assert_eq!(base64_encode(&[]), "");
     }
 }
 
@@ -1349,6 +1476,76 @@ expect:
         assert!(!result.detail.contains("never valid JSON"), "{}", result.detail);
     }
 
+    /// A read-back request whose path is a full URL bypasses the base URL
+    /// entirely, for a store that answers ingest and query on different
+    /// ports of the same container.
+    #[test]
+    fn a_request_with_an_absolute_url_ignores_the_base_url() {
+        // Two separate stubs, standing in for two ports of one container.
+        // Ingest is reachable only through `base_url`; search only through
+        // the absolute URL in the read-back. If either fell back to the
+        // other, the case would not pass.
+        let ingest = stub::start(vec![("/ingest", vec![Reply::json(200, "{}")])]);
+        let search = stub::start(vec![(
+            "/search",
+            vec![Reply::json(
+                200,
+                r#"{"hits":[{"message":"specmatrix minimal record","specmatrix.run":"{{RUNKEY}}"}]}"#,
+            )],
+        )]);
+        let adapter: Backend = serde_yaml::from_str(&format!(
+            r#"
+name: stub
+protocols:
+  otlp-logs:
+    formats: [otlp-json]
+    ingest:
+      request: POST /ingest
+    readback:
+      request: GET {}/search
+      body:
+        run_key: "{{{{ run_key }}}}"
+      records: /hits
+      fields:
+        body: /message
+      poll:
+        interval_ms: 10
+        timeout_ms: 120
+"#,
+            search.url
+        ))
+        .expect("adapter parses");
+        let runner = Runner::new(adapter, ingest.url.clone(), false).expect("runner builds");
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Pass, "detail: {}", result.detail);
+    }
+
+    /// A dotted field name with no adapter mapping is read as a JSON pointer,
+    /// the shape a nested field genuinely has in real OTLP JSON — an event's
+    /// timestamp, a link's trace id. This is what let a check on
+    /// `events.0.timeUnixNano` find real data against Tempo, which answers
+    /// OTLP JSON verbatim.
+    #[test]
+    fn a_dotted_field_with_no_mapping_is_read_as_a_json_pointer() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            (
+                "/search",
+                vec![Reply::json(
+                    200,
+                    r#"{"hits":[{"events":[{"timeUnixNano":"123"}],"specmatrix.run":"{{RUNKEY}}"}]}"#,
+                )],
+            ),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case =
+            case_yaml("  readback:\n    match: present\n    on: [\"events.0.timeUnixNano\"]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Pass, "detail: {}", result.detail);
+        assert!(result.detail.contains("123"), "{}", result.detail);
+    }
+
     /// A refusal is a REJECT carrying the status and the store's own words, so
     /// a reader can act on it without rerunning anything.
     #[test]
@@ -1666,6 +1863,15 @@ mod tests {
         });
         let found = first_record(&response, "/hits", "sm-new").expect("record present");
         assert_eq!(found.get("body").unwrap(), "ours");
+    }
+
+    /// The bug this guard exists to prevent: an empty marker string is
+    /// contained in every string, so without it, this would have returned
+    /// the first record regardless of whether it was ours.
+    #[test]
+    fn an_empty_key_matches_nothing_rather_than_everything() {
+        let response = json!({"hits": [{"body": "someone else's record entirely"}]});
+        assert!(first_record(&response, "/hits", "").is_none());
     }
 
     #[test]

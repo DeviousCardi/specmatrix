@@ -130,6 +130,41 @@ protocols:
   # to wait longer, not to lower the store's commit timeout: waiting changes
   # nothing about what Quickwit does, and tuning it would be the corpus
   # arranging its own result.
+  # Confirmed by hand on 2026-09-09. Quickwit creates otel-traces-v0_7 itself
+  # at start-up, the same way it creates the logs index; protobuf only, same
+  # as the OTLP logs endpoint. Read-back field names are Quickwit's own
+  # flattened columns rather than the OTLP JSON names.
+  otlp-traces:
+    formats: [otlp-traces-protobuf]
+    setup_verify:
+      request: GET /api/v1/indexes/otel-traces-v0_7
+      poll:
+        interval_ms: 500
+        timeout_ms: 60000
+    ingest:
+      request: POST /api/v1/otlp/v1/traces
+      headers:
+        Content-Type: application/x-protobuf
+    readback:
+      request: GET /api/v1/otel-traces-v0_7/search?query=trace_id:{{ trace_id_hex }}&max_hits=10
+      records: /hits
+      fields:
+        name: /span_name
+        traceId: /trace_id
+        spanId: /span_id
+        startTimeUnixNano: /span_start_timestamp_nanos
+        endTimeUnixNano: /span_end_timestamp_nanos
+        # Confirmed by hand on 2026-09-09: an event becomes one entry of a
+        # top-level `events` array, `{"event_name":...,"event_timestamp_nanos":...}`
+        # — renamed from OTLP's own `name`/`timeUnixNano`, full nanosecond
+        # precision kept.
+        events.0.timeUnixNano: /events/0/event_timestamp_nanos
+        events.0.name: /events/0/event_name
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000
+
+
   es-bulk:
     formats: [es-ndjson]
     # Quickwit will not create an index on write, so this protocol creates one

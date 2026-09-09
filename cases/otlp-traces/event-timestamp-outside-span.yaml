@@ -1,0 +1,50 @@
+id: otlp-traces/event-timestamp-outside-span
+protocol: otlp-traces
+title: A span event timestamped before the span's own start time
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/trace/v1
+  section: Span.Event
+  text: >
+    An event's time_unix_nano is independent of the span's start and end
+    times; nothing in the message ties them together, and a receiver that
+    requires an event to fall inside its span's interval is enforcing a rule
+    the format does not state.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/event-timestamp-outside-span.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on:
+      - events.0.timeUnixNano
+
+notes: >
+  `present` rather than `exact`: every store confirmed here keeps the event,
+  but none returns it at OTLP's own `events[].timeUnixNano` pointer — an
+  event becomes a Jaeger "log" with a microsecond timestamp, a renamed
+  top-level array entry in Quickwit, or a JSON string in OpenObserve rather
+  than nested structure. None of that is a rule violation; the specification
+  does not say how a store must expose what it kept, only that it keep it.
+  This row is a discoverability record, not a conformance judgement.
+
+  Confirmed by hand on 2026-09-09, all four with a control span (this one) in
+  the same export:
+
+    tempo 3.0.3        present at the OTLP pointer, nanosecond precision kept
+    jaeger 2.20.0       present under /logs/0/timestamp, microsecond precision
+    quickwit 0.8.2       present under /events/0/event_timestamp_nanos, nanosecond precision kept
+    openobserve 0.92.2  present, but as a JSON string value rather than
+                          structured JSON — confirmed by direct SQL query, not
+                          reachable through a JSON pointer, so this row reads
+                          it as absent though the data is there
+
+  A store that genuinely dropped the event would still show as absent here,
+  indistinguishably from OpenObserve's case above — the two are not the same
+  fact, and telling them apart needed a query by hand, which is recorded so
+  the next reader does not have to redo it.

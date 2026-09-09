@@ -61,8 +61,23 @@ pub struct Container {
     #[serde(default)]
     pub command: Vec<String>,
     pub port: u16,
+    /// Further host ports to publish, 1:1 with the container. `port` is the
+    /// one `specmatrix up` reports as the backend's base URL; a store that
+    /// answers ingest and query on two ports of one container — Jaeger,
+    /// Tempo — needs the second published too, or the adapter's own
+    /// cross-port read-back has nothing to reach.
+    #[serde(default)]
+    pub extra_ports: Vec<u16>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Inline file content, written to a temporary file and bind-mounted at
+    /// `/etc/specmatrix/config.yaml` before the container starts. For a store
+    /// whose settings this project needs are not all exposed as CLI flags —
+    /// Tempo's receiver bind address and storage backend, confirmed by hand
+    /// to have no flag equivalent for either. `command` references the fixed
+    /// mount path itself; the adapter is what knows what flag the image wants
+    /// pointed at it.
+    pub config: Option<String>,
     pub ready: Option<Ready>,
 }
 

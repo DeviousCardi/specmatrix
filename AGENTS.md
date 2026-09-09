@@ -143,7 +143,12 @@ runner encodes it to whatever the backend accepts. `send.format` names the
 format the file is written in, `send.encodings` lists what it may be sent as,
 and an adapter's `formats:` says what it accepts on the wire.
 
-- `otlp-json` — real OTLP JSON, sendable with `curl` as it stands.
+- `otlp-json` — real OTLP JSON, sendable with `curl` as it stands. Logs by
+  default; `otlp-metrics-json` and `otlp-traces-json` are the same convention
+  for the other two signals, each with its own protobuf counterpart
+  (`otlp-metrics-protobuf`, `otlp-traces-protobuf`) — three formats rather than
+  one because the three OTLP export services are different messages on the
+  wire, not a shared envelope.
 - `es-ndjson` — a real `_bulk` body.
 - `loki-json` — the push body as Loki itself documents it:
   `streams[].stream` for labels and `streams[].values` as `[timestamp_ns, line]`
@@ -221,6 +226,23 @@ language or of the adapter — GreptimeDB's PromQL has no quoted-name selector, 
 a metric named `a.b.c` cannot be named in a query even though the data is there.
 It is **never** a way to exclude a case the store fails. If you are reaching for
 it because a verdict is inconvenient, you are writing a false column.
+
+Two `container:` fields exist for settings a CLI flag cannot reach:
+
+- `extra_ports:` publishes additional container ports, for a store that splits
+  ingest and query across two ports of one container — Jaeger's OTLP receiver
+  and its own query API, Tempo's OTLP receiver and its `/ready`/query API. A
+  `readback.request` or `container.ready.request` naming an absolute URL
+  (`http://` or `https://`) is sent to that URL verbatim rather than through
+  `container.port`'s base URL.
+- `config:` is an inline file this project's own `specmatrix up` writes to a
+  temp path and mounts at a fixed path inside the container
+  (`/etc/specmatrix/config.yaml`), for a required setting with no CLI-flag
+  equivalent at all — confirm that by reading the binary's own `-help` first,
+  not by assuming. Tempo's OTLP receiver binds to `127.0.0.1` inside the
+  container unless its config sets an explicit `0.0.0.0` endpoint, and nothing
+  in the API says so — only `docker logs` names the bound address, and every
+  ingest from outside answers a bare connection reset with no HTTP status.
 
 ## Reporting a divergence
 

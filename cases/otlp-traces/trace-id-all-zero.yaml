@@ -1,0 +1,25 @@
+id: otlp-traces/trace-id-all-zero
+protocol: otlp-traces
+title: A trace id of all zero bytes is invalid
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/trace/v1
+  section: Span.trace_id
+  text: >
+    An ID with all zeroes OR of length other than 16 bytes is considered
+    invalid. The all-zero trace id is the more common accident — a
+    zero-initialised buffer never filled in — and refusing it is conformant.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/trace-id-all-zero.json
+
+expect:
+  ingest: accepted-or-rejected
+
+notes: >
+  No read-back: this suite finds every other case by its trace id, and a
+  trace id of all zeros is exactly the one value that cannot be used to find
+  anything back. What is checked is the answer at the door.

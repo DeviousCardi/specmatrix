@@ -1,0 +1,28 @@
+id: otlp-traces/span-id-all-zero
+protocol: otlp-traces
+title: A span id of all zero bytes is invalid
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/trace/v1
+  section: Span.span_id
+  text: >
+    An ID with all zeroes is considered invalid. This is one of the two
+    documented invalid shapes trace and span ids can take, and refusing the
+    span is conformant.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/span-id-all-zero.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: present
+    on: [name]
+
+notes: >
+  `present`, since the specification names the shape invalid without
+  mandating what a receiver does about it. What is worth recording is
+  whether a store stores it silently, unremarked, or refuses it outright.

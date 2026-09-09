@@ -1,0 +1,27 @@
+id: otlp-traces/zero-duration
+protocol: otlp-traces
+title: A span whose end_time equals its start_time
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/trace/v1
+  section: Span.end_time_unix_nano
+  text: >
+    end_time >= start_time permits equality. A span with zero measured
+    duration is what an operation too fast for the clock's resolution to
+    distinguish produces, and it is conformant.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/zero-duration.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [name]
+
+notes: >
+  A store computing a positive duration by assumption, rather than reading
+  the two timestamps as given, is the failure mode this exists to catch.

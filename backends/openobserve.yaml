@@ -104,6 +104,36 @@ protocols:
         interval_ms: 1000
         timeout_ms: 30000
 
+  # Confirmed by hand on 2026-09-09. Traces land in a stream named `default`,
+  # same as the loki-push protocol above, and answer the same `type=traces`
+  # search convention. `span_id` and `trace_id` keep their hex spelling;
+  # `name` becomes `operation_name`; `start_time`/`end_time` are nanoseconds,
+  # unlike the microseconds this adapter's OTLP-logs `_timestamp` column
+  # carries — traces keep full precision where logs do not.
+  otlp-traces:
+    formats: [otlp-traces-json]
+    ingest:
+      request: POST /api/default/v1/traces
+      headers:
+        Content-Type: application/json
+    readback:
+      request: POST /api/default/_search?type=traces
+      body:
+        query:
+          sql: "SELECT * FROM \"default\" WHERE trace_id = '{{ trace_id_hex }}'"
+          start_time: "{{ window_start_us }}"
+          end_time: "{{ window_end_us }}"
+      records: /hits
+      fields:
+        name: /operation_name
+        traceId: /trace_id
+        spanId: /span_id
+        startTimeUnixNano: /start_time
+        endTimeUnixNano: /end_time
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000
+
   loki-push:
     formats: [loki-json]
     # Confirmed by hand on 2026-09-09 against v0.92.2. openobserve/openobserve

@@ -1,0 +1,4 @@
+{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"specmatrix"}}]},
+"scopeSpans":[{"scope":{"name":"specmatrix"},"spans":[{"traceId":"{{ trace_id_hex }}","spanId":"0702030405060708",
+"name":"event-outside-span","kind":1,"startTimeUnixNano":"{{ now_ns }}","endTimeUnixNano":"{{ now_ns_fractional }}",
+"events":[{"timeUnixNano":"{{ now_minus_1d_ns }}","name":"stale-event"}]}]}]}]}

@@ -1,0 +1,29 @@
+id: otlp-traces/minimal-span
+protocol: otlp-traces
+title: An ordinary span is written and reads back unchanged
+control: true
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.3.0
+  section: trace-service
+  text: >
+    An ExportTraceServiceRequest carries resource spans, scope spans and
+    spans. One span with a trace id, a span id, a name and start/end times is
+    the smallest conformant export there is.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/minimal-span.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [name]
+
+notes: >
+  The control for the OTLP-traces suite. Read back by trace id rather than a
+  run-key attribute — a span has no equivalent field every backend indexes
+  the same way, and a trace is found by its trace id or not at all.

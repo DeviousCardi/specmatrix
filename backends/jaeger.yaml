@@ -1,0 +1,67 @@
+# Adapter for Jaeger, all-in-one.
+#
+# Confirmed by hand against jaegertracing/jaeger:2.20.0 on 2026-09-09.
+#
+# The OTLP HTTP receiver is on 4318 and needs no flag in Jaeger 2.x — v2 is a
+# rewrite around the OpenTelemetry Collector and takes OTLP by default, unlike
+# Jaeger 1.x which needed COLLECTOR_OTLP_ENABLED=true.
+#
+# Read-back is Jaeger's own query API, not OTLP — there is no way to ask
+# Jaeger for a span in the shape it was sent, only in Jaeger's model. What had
+# to be confirmed by hand rather than assumed:
+#
+#   GET /api/traces/<trace id, hex, no dashes>
+#   {"data":[{"spans":[{"operationName":"...","startTime":<int, MICROSECONDS>,
+#     "duration":<int, microseconds>,"tags":[{"key":...,"type":...,"value":...}],
+#     "logs":[...], ...}]}]}
+#
+# `startTime` is microseconds, not the nanoseconds OTLP sends — a precision
+# check on this column is checking Jaeger's own model, not a store that failed
+# to keep OTLP's precision; nanosecond-precision checks are `present`, not
+# `exact`, for this reason and this reason only.
+
+name: jaeger
+container:
+  image: jaegertracing/jaeger:2.20.0
+  port: 4318
+  extra_ports: [16686]
+  env:
+    COLLECTOR_OTLP_ENABLED: "true"
+  ready:
+    # The query UI, not the ingest port, which has no unauthenticated health
+    # endpoint of its own — and the query port is what a case's read-back
+    # actually reads from, so this is also confirming the port a case needs
+    # is the one that is up.
+    request: GET http://localhost:16686/
+    expect_status: 200
+
+auth:
+  kind: none
+
+protocols:
+  otlp-traces:
+    formats: [otlp-traces-json, otlp-traces-protobuf]
+    ingest:
+      request: POST /v1/traces
+    readback:
+      # A different port than ingest. The adapter's base URL is the ingest
+      # port (4318, matched to `container.port` so `specmatrix up` reports the
+      # right address); read-back overrides host and port outright.
+      request: GET http://localhost:16686/api/traces/{{ trace_id_hex }}
+      records: /data/0/spans
+      fields:
+        name: /operationName
+        startTimeUnixNano: /startTime
+        traceId: /traceID
+        spanId: /spanID
+        # A span event becomes a Jaeger "log", confirmed by hand on
+        # 2026-09-09: {"logs":[{"timestamp":<int, MICROSECONDS>,
+        # "fields":[{"key":"event","type":"string","value":<the event name>}]}]}.
+        # Two renames and a precision drop packed into one mapping — there is
+        # no field in Jaeger's model that is simply "the event's timestamp" or
+        # "the event's name" at a fixed pointer, this is where they live.
+        events.0.timeUnixNano: /logs/0/timestamp
+        events.0.name: /logs/0/fields/0/value
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000

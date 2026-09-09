@@ -1,0 +1,3 @@
+{"resourceSpans":[{"resource":{"attributes":[]},
+"scopeSpans":[{"scope":{"name":"specmatrix"},"spans":[{"traceId":"{{ trace_id_hex }}","spanId":"0d02030405060708",
+"name":"no-service-name","kind":1,"startTimeUnixNano":"{{ now_ns }}","endTimeUnixNano":"{{ now_ns_fractional }}"}]}]}]}
