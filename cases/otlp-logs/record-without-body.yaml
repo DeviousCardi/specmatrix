@@ -15,7 +15,7 @@ rule:
     a reader will take it for the event's.
 
   observed:
-    - https://github.com/VictoriaMetrics/VictoriaMetrics/issues/11525
+    - https://github.com/VictoriaMetrics/VictoriaLogs/issues/1778
 
 send:
   format: otlp-json
@@ -52,3 +52,7 @@ notes: >
   substitution rather than an accident of one payload. Nothing errors at
   ingest, and a dashboard renders the notice as though the application had
   logged it.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/20, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

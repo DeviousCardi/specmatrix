@@ -27,3 +27,7 @@ notes: >
   `present`: nothing requires a store to surface this count back through its
   query API, only to accept the span. The row records whether it is visible,
   which is worth knowing without being a divergence on its own.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/30, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

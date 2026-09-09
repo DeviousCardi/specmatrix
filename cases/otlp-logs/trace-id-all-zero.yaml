@@ -43,3 +43,7 @@ notes: >
   store to discard it — but a query for records belonging to trace
   00000000000000000000000000000000 returns every untraced record on Parseable
   and none on the others, with no error raised on either side.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/22, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

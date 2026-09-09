@@ -28,3 +28,7 @@ notes: >
   cases: any loss here is a property of a store's attribute storage, not a
   conformance failure by itself, and the row exists so a reader can see
   whether it agrees with the other columns.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/29, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

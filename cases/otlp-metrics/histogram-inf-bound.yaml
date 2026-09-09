@@ -32,3 +32,7 @@ notes: >
   The Prometheus translation should produce a _bucket series with le="+Inf"
   holding 3; a store that produced le="0.1" only has dropped the implicit
   bucket.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/25, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

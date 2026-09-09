@@ -31,3 +31,7 @@ notes: >
   the value survives and is findable, and it is: `{... trace_id="deadbeef..."}`.
   A store that kept it queryable only via a metadata-specific LogQL filter
   would still pass; one that dropped it would not.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/17, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

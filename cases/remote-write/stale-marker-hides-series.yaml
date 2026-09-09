@@ -48,3 +48,7 @@ notes: >
   returns an empty result. Sending an ordinary NaN here would test nothing —
   every store that keeps the value would look like one that ignored a marker it
   was never sent.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/44, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

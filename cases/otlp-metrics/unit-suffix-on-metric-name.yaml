@@ -60,3 +60,7 @@ notes: >
   GreptimeDB is N/A rather than PASS only because its PromQL requires a metric
   matcher in every selector, so the question cannot be put through that API.
   `show tables` answers it: the suffix is appended.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/28, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

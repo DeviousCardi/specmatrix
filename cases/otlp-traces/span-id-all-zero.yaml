@@ -26,3 +26,7 @@ notes: >
   `present`, since the specification names the shape invalid without
   mandating what a receiver does about it. What is worth recording is
   whether a store stores it silently, unremarked, or refuses it outright.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/35, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

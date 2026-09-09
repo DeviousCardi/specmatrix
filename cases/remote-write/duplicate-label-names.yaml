@@ -76,3 +76,7 @@ notes: >
   partial rejection — 2.0 added written-samples response headers for exactly
   this. The verdict is still ALTER: a caller reading the status code is told the
   opposite of what happened.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/38, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

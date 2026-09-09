@@ -276,4 +276,34 @@ env:
             check_pinned(container).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         }
     }
+
+    /// Every adapter must be able to say which version it is.
+    ///
+    /// A column without a version is a claim about the past that reads as a
+    /// claim about the present, which is the one thing `docs/BACKENDS.md` says
+    /// a column may not do. This is checked here rather than left to review
+    /// because it already slipped through once: the Jaeger adapter shipped with
+    /// no `version_from` at all and published a blank version for a whole
+    /// suite, and nothing failed, because the audit only checked that the image
+    /// was pinned.
+    #[test]
+    fn every_committed_adapter_can_report_a_version() {
+        for entry in std::fs::read_dir("backends").expect("backends/ exists") {
+            let path = entry.unwrap().path();
+            if path.extension().map(|e| e != "yaml").unwrap_or(true) {
+                continue;
+            }
+            let adapter = crate::backend::Backend::load(&path)
+                .unwrap_or_else(|e| panic!("{} does not parse: {e:#}", path.display()));
+            let vf = adapter
+                .version_from
+                .as_ref()
+                .unwrap_or_else(|| panic!("{} declares no version_from", path.display()));
+            assert!(
+                vf.field.is_some() || vf.pattern.is_some(),
+                "{}: version_from needs either a `field` or a `pattern`",
+                path.display()
+            );
+        }
+    }
 }

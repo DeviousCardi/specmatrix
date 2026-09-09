@@ -50,3 +50,37 @@ notes: >
 
   Loki 3.1.1: PASS, 204. Four of five stores accept an empty export; Quickwit
   0.8.2 alone answers 500.
+
+  Loki 3.7.7: REJECT, 422 — a change from 3.1.1, confirmed by hand on
+  2026-09-09 against grafana/loki:3.7.7 (`/loki/api/v1/status/buildinfo`
+  reports version 3.7.7, revision 7a40404f, branch release-3.7.x). Both
+  encodings are refused:
+
+    $ curl -X POST localhost:3100/otlp/v1/logs \
+        -H 'Content-Type: application/json' --data '{"resourceLogs":[]}'
+    9error at least one valid stream is required for ingestion
+    HTTP 422
+
+    $ curl -X POST localhost:3100/otlp/v1/logs \
+        -H 'Content-Type: application/x-protobuf' --data-binary ''
+    9error at least one valid stream is required for ingestion
+    HTTP 422
+
+  Control, issued against the same container at the same moment: one valid
+  record with a `service.name` resource attribute and a string body returned
+  HTTP 204. So the container was healthy and accepting, and the refusal is
+  specific to the empty export rather than a startup or readiness artefact.
+
+  This is the second store to refuse an empty export, and it is a regression
+  against the same clause Quickwit fails: OTLP's `docs/specification.md` says
+  "If the server receives an empty request (a request that does not carry any
+  telemetry data) the server SHOULD respond with success." Unlike Quickwit's
+  500 it is a 4xx, so a Collector will not retry it indefinitely — the failure
+  is loud rather than a retry storm — but conformant traffic is still refused,
+  and a Collector flushing on a timer with nothing to send produces a steady
+  stream of 422s with no user-actionable cause.
+
+  Recorded separately: the error body is returned protobuf-framed (the leading
+  `9` is a length prefix, not text) even when the request carried
+  `Content-Type: application/json`, so a JSON client cannot read the reason it
+  was refused. Same class as the OpenObserve response-encoding draft.

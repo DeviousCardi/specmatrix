@@ -28,3 +28,7 @@ notes: >
   `present`, not `exact`: the specification says what is expected of a well-
   formed span, not what a receiver must do when handed one that is not. The
   row records whether a store notices at all.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/31, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

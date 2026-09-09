@@ -29,3 +29,7 @@ notes: >
   "unknown_service" or "(unnamed)" is a legitimate reading of "equivalent to
   unknown", and this row records which each store chose without calling
   either wrong on its own.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/33, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

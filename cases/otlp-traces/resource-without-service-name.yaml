@@ -29,3 +29,7 @@ notes: >
   what a store names the service by default — "unknown_service", empty, or
   something else — is not settled by the wire format, only that the span
   itself must be kept and found.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/34, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

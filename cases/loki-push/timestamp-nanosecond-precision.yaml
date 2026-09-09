@@ -11,6 +11,8 @@ rule:
     epoch, so nanosecond precision is the field's native resolution rather
     than a special case a store has to preserve deliberately. What is checked
     is that a store claiming this API keeps the digits it was given.
+  observed:
+    - https://github.com/openobserve/openobserve/issues/14344
 
 send:
   format: loki-json

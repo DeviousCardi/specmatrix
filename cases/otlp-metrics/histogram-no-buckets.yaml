@@ -49,3 +49,7 @@ notes: >
   read and only this data point was discarded — along with its count and sum,
   which have nothing to do with the missing buckets. 200, no counter, no log.
   Filed as VictoriaMetrics#11528.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/26, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

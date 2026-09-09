@@ -9,7 +9,8 @@
 # Confirmed by hand against prom/prometheus:v3.14.0 on 2026-09-09:
 #
 #   $ curl -s localhost:9090/api/v1/status/buildinfo
-#   {"status":"success","data":{"version":"3.6.0",...}}
+#   {"status":"success","data":{"version":"3.14.0",
+#    "revision":"d7598b7141418fa35be2b5ec5d0fefb634199610",...}}
 #
 #   $ curl -sG localhost:9090/api/v1/query \
 #       --data-urlencode 'query=specmatrix_gauge{specmatrix_run="sm-..."}'

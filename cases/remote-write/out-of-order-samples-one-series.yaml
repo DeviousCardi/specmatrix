@@ -29,3 +29,7 @@ notes: >
   The value read back is the sample at the latest timestamp, so this records
   which of the two the store kept. A store with out-of-order ingestion enabled
   keeps both; one without keeps the newer and drops the older.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/42, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

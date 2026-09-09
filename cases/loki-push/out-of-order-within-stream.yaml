@@ -33,3 +33,7 @@ notes: >
   configuration: accepted (204), and both lines are queryable. Recent Loki
   defaults to accepting a modest amount of out-of-order writes rather than
   requiring -ingester.unordered-writes to be turned on for one this small.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/16, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

@@ -88,9 +88,14 @@ much longer to build and is what makes the results worth citing.
 
 ## Status
 
-Not yet published. Six protocols, twelve backends and eighty-one checks run
-unattended from one command; the write-up that has to precede publication is
-not done.
+Not yet published, and the reason is now a date rather than a task. Six
+protocols, twelve backends and eighty checks run unattended from one command.
+Every divergence is filed upstream or has a recorded reason for not being, and
+every check that records a behaviour without judging it carries an open
+adjudication issue. What is left is the one thing work cannot finish early: the
+matrix is republished quarterly, and a claim to be maintained quarterly needs a
+second quarter to have happened. `v1.0.0` waits for it; `v0.9.0` is the corpus
+as it stands.
 
 Logs came first: two protocols, six stores, twenty-four checks. Metrics
 followed, and they are where silent alteration does the most damage — a wrong
@@ -110,9 +115,12 @@ case that found it, with the version and the exact request.
 
 Each is filed with the project it concerns, with a reproduction that needs
 nothing but `curl` — `specmatrix encode` produces the body for the protocols
-that exist on the wire only as protobuf — and each is linked from the check
-that found it. `CONTRIBUTING.md` requires that a maintainer learns about a
-finding from their own tracker rather than from a comparison table.
+that exist on the wire only as protobuf — and the issue URL goes in the
+check's `rule.observed` list, so a reader can see the bug the check caught.
+`CONTRIBUTING.md` requires that a maintainer learns about a finding from their
+own tracker rather than from a comparison table. Fifteen of the twenty-three
+divergences are filed and linked; the eight outstanding are all in the
+`loki-push` suite, the newest one, and are why no page is published yet.
 
 Loki's push API joined the same three log stores that already answer OTLP —
 Loki itself, VictoriaLogs, OpenObserve — read back through the same
@@ -189,7 +197,7 @@ store you are willing to have written to, and read
 ## Running it in CI, without cloning this repository
 
 ```yaml
-- uses: DeviousCardi/specmatrix@v1.0.0
+- uses: DeviousCardi/specmatrix@v0.9.0
   with:
     backend: loki      # or path/to/your-adapter.yaml for one not carried here
     suite: otlp-logs

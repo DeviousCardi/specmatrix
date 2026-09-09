@@ -111,6 +111,17 @@ notes: >
   does not give one. Recorded, not adjudicated — but this is now a strong
   question to put to the specification's owners rather than a curiosity.
 
+  Loki 3.7.7 re-measured 2026-09-09, after the adapter was bumped from 3.1.1:
+  sent "1788968196123456789", read back "1788968196123456789" — still a string
+  of nanoseconds, still every digit. The behaviour is unchanged across a minor
+  release, which is worth having: it makes the Loki row evidence about a
+  deliberate choice rather than one build's accident. Note the published
+  2026-09-08 page recorded this column as `release-3.1.x-89fe788`, the string
+  that Loki's buildinfo returned then; 3.7.7 returns a plain "3.7.7". Any table
+  quoting "Loki 3.1.1" for this case — including adjudication issue #12 as
+  first written — is citing the older measurement and should be updated to
+  name both.
+
   Adjudication opened 2026-09-09:
   https://github.com/DeviousCardi/specmatrix/issues/12, per ADJUDICATION.md.
   Open, waiting on the upstream question being put to the OpenTelemetry

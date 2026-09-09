@@ -40,3 +40,7 @@ notes: >
   sees the previous run's point too. That is acceptable here because the
   assertion is that the metric exists at all, and it is why this row is
   `present` rather than `exact`.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/23, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

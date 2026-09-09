@@ -27,3 +27,17 @@ notes: >
   label is kept as sent — `1zone` appears as a top-level column on the stored
   record. A sender relying on refusal to catch a malformed label gets no
   signal from OpenObserve that Loki would have given it.
+
+  VictoriaLogs v1.52.0: ALTER, same as OpenObserve — accepted with 204 where
+  Loki refuses with 400. Confirmed by hand on 2026-09-09, and the label is kept
+  intact rather than dropped or renamed: the stored record carries
+  `"1zone":"a"` as a top-level field and `_stream` reads
+  `{1zone="a",service_name="vlrepro",specmatrix_run="repro-label"}`.
+
+  Deliberately not filed upstream, for either store. The label name is invalid
+  under Prometheus's grammar, which is where Loki's rule comes from, but both
+  stores keep the data they were sent and both let it be queried back. What a
+  sender loses is a validation signal it would have got from Loki, not a label.
+  That is worth recording on the page and is too thin to file as a defect
+  against two projects; a store is entitled to a looser label grammar than the
+  reference as long as it says so, and neither claims strict Loki parity.
