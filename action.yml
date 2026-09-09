@@ -53,8 +53,14 @@ outputs:
 runs:
   using: composite
   steps:
+    # Only actually needed to pick a corpus ref or a binary to download —
+    # both of which `ref`/`binary-path` can override. Skipped when both are
+    # given, so the dogfood workflow (which always gives both) never depends
+    # on a release existing at all, which matters before this project's own
+    # first tag is ever pushed.
     - name: resolve version
       id: version
+      if: inputs.ref == '' || inputs.binary-path == ''
       shell: bash
       run: |
         set -euo pipefail
@@ -120,7 +126,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        corpus=".specmatrix-corpus-${{ github.action_ref || 'action' }}"
+        corpus=".specmatrix-corpus"
         backend_input="${{ inputs.backend }}"
         if [[ "$backend_input" == */* ]]; then
           # A path into the caller's own checkout: split it into the
