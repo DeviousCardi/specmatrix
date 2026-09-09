@@ -12,7 +12,41 @@ permissions:
   contents: write
 
 jobs:
+  # Pushing a tag creates a tag, not a release, and the upload action below
+  # needs a release to attach to. One job creates it, once, before any build
+  # starts — rather than letting the two matrix legs race to create the same
+  # one.
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The tag's own annotation becomes the release notes, so `fetch-depth`
+          # has to be deep enough to carry the tag object rather than just the
+          # commit it points at.
+          fetch-depth: 0
+      - name: Create the release this tag names, if it is not there already
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Idempotent: a re-run of a partly failed release must not fail here.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists, leaving it alone"
+            exit 0
+          fi
+          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > notes.md
+          # An unannotated tag leaves notes.md empty, which `gh` rejects.
+          if [ ! -s notes.md ]; then
+            echo "Release $GITHUB_REF_NAME." > notes.md
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md
+
   build:
+    needs: release
     strategy:
       fail-fast: false
       matrix:
@@ -29,8 +63,11 @@ jobs:
         with:
           key: ${{ matrix.target }}
       # Builds (cross-compiling for aarch64 via `cross`, which this action
-      # drives itself), archives, and uploads to the release the pushed tag
-      # names, creating it if this is the first artefact for it.
+      # drives itself), archives, and uploads to the release the `release` job
+      # above created. This action does *not* create the release itself — it
+      # waits for one to exist and then fails. v0.9.0 was tagged believing it
+      # did: both matrix legs built their binaries, then retried `release not
+      # found` eleven times and exited 1.
       - uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           bin: specmatrix
