@@ -75,12 +75,26 @@ the backend and is never counted with the others.\n",
     }
 }
 
+/// A previous run of the same suite, for the page to compare against.
+///
+/// The strongest evidence this project can offer that a finding is acted on
+/// is a cell changing from `ALTER` to `PASS` with the version it changed at
+/// — which needs the previous verdict beside the new one, not just linked.
+pub struct History<'a> {
+    /// Where the previous run's own page lives, relative to the page being
+    /// rendered now.
+    pub link: String,
+    pub matrix: &'a Matrix,
+}
+
 impl Matrix {
     /// A single static page, rendered from the JSON beside it.
     ///
     /// `corpus_commit` identifies the corpus the run used, so a reader can
-    /// check out exactly the checks that produced these cells.
-    pub fn to_html(&self, corpus_commit: Option<&str>) -> String {
+    /// check out exactly the checks that produced these cells. `history`, when
+    /// given, is the most recent prior run of this same suite: a cell whose
+    /// verdict changed says so and links back to it.
+    pub fn to_html(&self, corpus_commit: Option<&str>, history: Option<&History>) -> String {
         let mut out = String::new();
         out.push_str(&format!(
             "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n<title>{} — SpecMatrix</title>\n<style>{}</style>\n</head><body>\n",
@@ -96,6 +110,13 @@ impl Matrix {
             out.push_str(&format!(
                 "<p class=\"meta\">Corpus at commit <code>{}</code>.</p>\n",
                 escape_html(commit)
+            ));
+        }
+        if let Some(h) = history {
+            out.push_str(&format!(
+                "<p class=\"meta\">Compared against the <a href=\"{}\">run of {}</a>; a cell that changed says so.</p>\n",
+                escape_html(&h.link),
+                escape_html(&h.matrix.generated[..10])
             ));
         }
 
@@ -124,10 +145,25 @@ impl Matrix {
                             Verdict::Alter => "alter",
                             Verdict::NotApplicable => "na",
                         };
+                        let hist = history.and_then(|h| {
+                            let prev_outcome =
+                                h.matrix.outcomes.iter().find(|o| o.backend == outcome.backend)?;
+                            let prev = prev_outcome.results.iter().find(|r| r.id == id)?;
+                            if prev.verdict == result.verdict {
+                                return None;
+                            }
+                            Some(format!(
+                                "<a class=\"hist\" href=\"{}\">changed from {} on {}</a>",
+                                escape_html(&h.link),
+                                label(prev.verdict),
+                                escape_html(&h.matrix.generated[..10])
+                            ))
+                        });
                         out.push_str(&format!(
-                            "<td class=\"{class}\"><span class=\"v\">{}</span><span class=\"d\">{}</span></td>",
+                            "<td class=\"{class}\"><span class=\"v\">{}</span><span class=\"d\">{}</span>{}</td>",
                             label(result.verdict),
-                            escape_html(&result.detail)
+                            escape_html(&result.detail),
+                            hist.unwrap_or_default()
                         ));
                     }
                     None => {
@@ -165,6 +201,7 @@ td{max-width:22rem}\
 .alter{background:#fdf0f0}.alter .v{color:#a01b1b}\
 .na{background:#f4f4f7}.na .v{color:#5a5a70}\
 .notrun{background:#fff}.notrun .v{color:#999}\
+.hist{display:block;font-size:10px;color:#555;margin-top:.2rem;text-decoration:underline}\
 ";
 
 fn version_line(outcome: &Outcome) -> String {
@@ -356,7 +393,7 @@ mod tests {
     /// The page must never carry a score, a percentage or an ordering.
     #[test]
     fn the_html_page_carries_no_score_or_ranking() {
-        let page = two().to_html(None).to_lowercase();
+        let page = two().to_html(None, None).to_lowercase();
         for banned in ["score", "rank", "%", " out of ", "best", "worst", "winner"] {
             assert!(!page.contains(banned), "page must not contain {banned:?}");
         }
@@ -364,7 +401,7 @@ mod tests {
 
     #[test]
     fn the_html_page_is_dated_and_versioned() {
-        let page = two().to_html(Some("abc1234"));
+        let page = two().to_html(Some("abc1234"), None);
         assert!(page.contains("2026-09-08"), "{page}");
         assert!(page.contains("2.9.4"), "{page}");
         assert!(page.contains("abc1234"), "{page}");
@@ -374,7 +411,7 @@ mod tests {
     /// it is not a verdict about the backend.
     #[test]
     fn each_verdict_gets_its_own_class() {
-        let page = two().to_html(None);
+        let page = two().to_html(None, None);
         for class in ["class=\"pass\"", "class=\"reject\"", "class=\"alter\""] {
             assert!(page.contains(class), "missing {class}");
         }
@@ -396,17 +433,74 @@ mod tests {
             )],
             when,
         );
-        let page = matrix.to_html(None);
+        let page = matrix.to_html(None, None);
         assert!(!page.contains("<script>"), "markup must be escaped");
         assert!(page.contains("&lt;script&gt;"), "{page}");
         assert!(page.contains("&amp;"), "{page}");
+    }
+
+    /// A cell whose verdict differs from the same check on the same backend
+    /// in the previous run says so, with a link — the strongest evidence a
+    /// finding was acted on is a cell moving from ALTER to PASS with the
+    /// version it changed at.
+    #[test]
+    fn a_cell_that_changed_since_the_previous_run_says_so() {
+        let earlier = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let previous = Matrix::new(
+            "otlp-logs",
+            vec![outcome(
+                "loki",
+                Some("3.1.1"),
+                None,
+                vec![("otlp-logs/x", Verdict::Alter, "was altered")],
+            )],
+            earlier,
+        );
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-08T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let current = Matrix::new(
+            "otlp-logs",
+            vec![outcome(
+                "loki",
+                Some("3.7.7"),
+                None,
+                vec![("otlp-logs/x", Verdict::Pass, "fixed")],
+            )],
+            now,
+        );
+        let history = History {
+            link: "../../2026-06-01/otlp-logs/matrix.html".to_string(),
+            matrix: &previous,
+        };
+        let page = current.to_html(None, Some(&history));
+        assert!(page.contains("changed from ALTER"), "{page}");
+        assert!(page.contains("2026-06-01/otlp-logs/matrix.html"), "{page}");
+    }
+
+    /// A check with no prior verdict — new this run, or the previous run
+    /// simply did not carry that backend — gets no history annotation. There
+    /// is nothing to compare it against.
+    #[test]
+    fn a_new_check_carries_no_history_annotation() {
+        let earlier = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let previous = Matrix::new("otlp-logs", vec![], earlier);
+        let page = two().to_html(
+            None,
+            Some(&History { link: "elsewhere.html".to_string(), matrix: &previous }),
+        );
+        assert!(!page.contains("class=\"hist\""), "{page}");
     }
 
     /// Each row links to the check that produced it, so a reader can see the
     /// rule the verdict rests on.
     #[test]
     fn each_row_links_to_its_case_file() {
-        let page = two().to_html(None);
+        let page = two().to_html(None, None);
         assert!(page.contains("cases/otlp-logs/minimal-record.yaml"), "{page}");
     }
 
