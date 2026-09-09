@@ -343,19 +343,28 @@ impl Runner {
             );
             if let Some(series) = expect.series.as_deref() {
                 vars.insert("series", series.to_string());
-                // Built here rather than in the adapter because only the
-                // runner knows both halves: the case names the series, the
-                // adapter names the run-key label, and which of PromQL's two
-                // selector forms is legal depends on the name.
-                vars.insert(
-                    "series_selector",
-                    crate::remote_write::series_selector(
-                        series,
-                        self.backend.run_key_field.as_deref(),
-                        vars.get("run_key").map(String::as_str).unwrap_or_default(),
-                    ),
-                );
             }
+            // Built here rather than in the adapter because only the runner
+            // knows both halves: the case names the series, the adapter names
+            // the run-key label, and which of PromQL's two selector forms is
+            // legal depends on the name.
+            //
+            // A check that names no series still gets a selector, matching this
+            // run's records whatever they ended up called. That is the only way
+            // to ask what a store *renamed* something to: a selector carrying
+            // the name we sent cannot find a metric stored under another one,
+            // and would report the rename as the record having vanished.
+            let queried = expect.stored_as.as_deref().or(expect.series.as_deref()).unwrap_or("");
+            let selector = if queried.contains('{') {
+                template::render(queried, &vars)
+            } else {
+                crate::remote_write::series_selector(
+                    queried,
+                    self.backend.run_key_field.as_deref(),
+                    vars.get("run_key").map(String::as_str).unwrap_or_default(),
+                )
+            };
+            vars.insert("series_selector", selector);
             let (one, detail) = self
                 .evaluate_readback(case, expect, readback, &vars, status, &reported, &rendered)?;
             if one == Verdict::Alter {
@@ -793,6 +802,7 @@ fn logical_field_for(
     match protocol {
         "es-bulk" => crate::es::logical_field(sent, field),
         "remote-write" => crate::remote_write::logical_field(sent, field, series),
+        "otlp-metrics" => crate::otlp::metric_field(sent, field, series),
         _ => crate::otlp::logical_field(sent, field),
     }
 }

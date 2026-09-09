@@ -1,0 +1,34 @@
+id: otlp-metrics/minimal-gauge
+protocol: otlp-metrics
+title: An ordinary OTLP gauge is written and reads back unchanged
+control: true
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.3.0
+  section: metrics-service
+  text: >
+    An ExportMetricsServiceRequest carries resource metrics, scope metrics and
+    metrics. One gauge with one numeric data point is the smallest conformant
+    export there is.
+
+send:
+  format: otlp-metrics-json
+  encodings: [otlp-metrics-json, otlp-metrics-protobuf]
+  body: cases/otlp-metrics/minimal-gauge.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    series: specmatrix_otlp_gauge
+    on:
+      - field: value
+        as: float
+
+notes: >
+  The control for the OTLP-metrics suite. It carries no `unit`, deliberately,
+  and so does every other case here except unit-suffix-on-metric-name: a unit
+  changes the name a Prometheus-shaped store files the metric under, and a
+  corpus that carried one everywhere would be testing that translation in every
+  row instead of once.

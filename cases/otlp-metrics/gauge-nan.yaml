@@ -1,0 +1,48 @@
+id: otlp-metrics/gauge-nan
+protocol: otlp-metrics
+title: A gauge data point whose value is NaN
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.3.0
+  section: number-data-point
+  text: >
+    `as_double` is a double, and NaN is one. OTLP's JSON mapping follows proto3
+    JSON, which writes the value as the string "NaN" because JSON has no
+    literal for it. Nothing in the specification permits a receiver to discard
+    the point.
+  observed:
+    - https://github.com/VictoriaMetrics/VictoriaMetrics/issues/7241
+
+send:
+  format: otlp-metrics-json
+  encodings: [otlp-metrics-json, otlp-metrics-protobuf]
+  body: cases/otlp-metrics/gauge-nan.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    series: specmatrix_otlp_nan
+    on:
+      - field: value
+        as: float
+
+notes: >
+  The OTLP twin of remote-write/histogram-nan-count, and the pair is the point:
+  a store that accepts both protocols has two paths into the same storage, and
+  whether they agree about NaN is a question neither suite can ask alone.
+
+  Measured 2026-09-09:
+
+    prometheus 3.14.0        PASS
+    mimir 3.2.0              PASS
+    greptimedb 1.2.0         PASS
+    victoriametrics 1.151.0  ALTER  the point never becomes queryable
+
+  The same verdict VictoriaMetrics gets in the remote-write suite, from the
+  same cause: NaN samples are dropped at ingest, deliberately, and the counter
+  that reported them was disabled because NaNs turn out to be ordinary traffic.
+  See remote-write/histogram-nan-count for the full account and the links. The
+  two suites agreeing is itself the answer to the question this pairing exists
+  to ask — the two ingest paths into VictoriaMetrics treat NaN the same way.

@@ -1,0 +1,55 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "specmatrix"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "specmatrix"
+          },
+          "metrics": [
+            {
+              "name": "specmatrix_otlp_exphist",
+              "exponentialHistogram": {
+                "aggregationTemporality": 2,
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "{{ now_ns }}",
+                    "count": "3",
+                    "sum": 6.0,
+                    "scale": 0,
+                    "zeroCount": "0",
+                    "positive": {
+                      "offset": 0,
+                      "bucketCounts": [
+                        "1",
+                        "2"
+                      ]
+                    },
+                    "attributes": [
+                      {
+                        "key": "specmatrix_run",
+                        "value": {
+                          "stringValue": "{{ run_key }}"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

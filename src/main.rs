@@ -54,6 +54,26 @@ enum Command {
         #[arg(long, short)]
         verbose: bool,
     },
+    /// Convert a case payload into the bytes a backend receives.
+    ///
+    /// The corpus keeps payloads in a readable format, but two of the metric
+    /// protocols only exist on the wire as protobuf — remote-write is also
+    /// snappy-compressed. Without this, "reproduce it with curl" is impossible
+    /// for exactly the backends whose findings are hardest to argue, and a
+    /// maintainer has to take the runner's word for what was sent.
+    Encode {
+        /// Payload file, in the format the case declares
+        payload: PathBuf,
+        /// The format the file is written in
+        #[arg(long)]
+        from: String,
+        /// The wire encoding to produce
+        #[arg(long)]
+        to: String,
+        /// Where to write the bytes. Defaults to stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// Start a backend's container and wait until its readiness probe passes.
     Up {
         #[arg(long)]
@@ -119,6 +139,33 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&outcome)?);
             } else {
                 report::print_table(&outcome);
+            }
+            Ok(())
+        }
+
+        Command::Encode { payload, from, to, out } => {
+            let raw = std::fs::read(&payload)
+                .with_context(|| format!("reading {}", payload.display()))?;
+            // Template variables are rendered so the result is actually
+            // sendable: a payload still carrying `{{ now_ms }}` encodes to a
+            // timestamp of zero, which every store refuses for its own reasons
+            // and none of them the one being reproduced.
+            let vars = template::sendable_vars();
+            let rendered = template::render_bytes(&raw, &vars);
+            let wire = encode::to_wire(&from, &to, &rendered)?;
+            match out {
+                Some(path) => {
+                    std::fs::write(&path, &wire)
+                        .with_context(|| format!("writing {}", path.display()))?;
+                    eprintln!("wrote {} ({} bytes)", path.display(), wire.len());
+                    for (name, value) in encode::headers_for(&to) {
+                        eprintln!("  -H '{name}: {value}'");
+                    }
+                }
+                None => {
+                    use std::io::Write;
+                    std::io::stdout().write_all(&wire)?;
+                }
             }
             Ok(())
         }

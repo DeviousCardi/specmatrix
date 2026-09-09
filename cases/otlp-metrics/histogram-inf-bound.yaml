@@ -1,0 +1,34 @@
+id: otlp-metrics/histogram-inf-bound
+protocol: otlp-metrics
+title: A histogram has one more bucket count than it has bounds
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.3.0
+  section: histogram-data-point
+  text: >
+    The number of `bucket_counts` must be one greater than the number of
+    `explicit_bounds`; the final count is the implicit +Inf bucket, which is
+    not listed in the bounds. A store that expects them to be equal length, or
+    that drops the last count, loses the total.
+
+send:
+  format: otlp-metrics-json
+  encodings: [otlp-metrics-json, otlp-metrics-protobuf]
+  body: cases/otlp-metrics/histogram-inf-bound.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    series: specmatrix_otlp_hist
+    stored_as: specmatrix_otlp_hist_count
+    on:
+      - field: value
+        as: float
+
+notes: >
+  Two counts, one bound, so the +Inf bucket holds 2 and the total count is 3.
+  The Prometheus translation should produce a _bucket series with le="+Inf"
+  holding 3; a store that produced le="0.1" only has dropped the implicit
+  bucket.

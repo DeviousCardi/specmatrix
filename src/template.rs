@@ -16,6 +16,31 @@ pub fn render(input: &str, vars: &Vars) -> String {
     out
 }
 
+/// The variables a payload needs to be sendable by hand, with a fresh run key
+/// and the current time.
+///
+/// Deliberately not the runner's full set: this is for `specmatrix encode`,
+/// whose job is to produce something a maintainer can send with curl, not to
+/// reproduce a particular run.
+pub fn sendable_vars() -> Vars {
+    let now = chrono::Utc::now();
+    let mut vars = Vars::new();
+    vars.insert("run_key", format!("sm-{:x}", rand::random::<u64>()));
+    vars.insert("now_ms", now.timestamp_millis().to_string());
+    vars.insert("now_s", now.timestamp().to_string());
+    vars.insert("now_ns", now.timestamp_nanos_opt().unwrap_or_default().to_string());
+    vars.insert(
+        "now_minus_10s_ms",
+        (now - chrono::Duration::seconds(10)).timestamp_millis().to_string(),
+    );
+    vars.insert(
+        "now_minus_1h_ms",
+        (now - chrono::Duration::hours(1)).timestamp_millis().to_string(),
+    );
+    vars.insert("far_future_ms", (now + chrono::Duration::hours(1)).timestamp_millis().to_string());
+    vars
+}
+
 /// Byte-level substitution, for payloads that are deliberately not valid UTF-8.
 pub fn render_bytes(input: &[u8], vars: &Vars) -> Vec<u8> {
     let mut out = input.to_vec();

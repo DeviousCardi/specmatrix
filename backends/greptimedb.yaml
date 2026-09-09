@@ -70,3 +70,49 @@ protocols:
       poll:
         interval_ms: 1000
         timeout_ms: 30000
+
+  # Confirmed by hand on 2026-09-09. Protobuf only, and it says so clearly:
+  #
+  #   {"error":"Unsupported content type 'application/json'. OTLP endpoint only
+  #     supports 'application/x-protobuf'."}
+  otlp-metrics:
+    formats: [otlp-metrics-protobuf]
+    # Confirmed by hand on 2026-09-09, and an inability of the query language
+    # rather than a behaviour of the store:
+    #
+    #   $ curl -sG localhost:4000/v1/prometheus/api/v1/query \
+    #       --data-urlencode 'query={specmatrix_run!=""}'
+    #   {"status":"error","error":"Expect a metric matcher, but not found",
+    #    "errorType":"InvalidSyntax"}
+    #
+    # GreptimeDB's PromQL requires a metric matcher in every selector, so a
+    # check that deliberately names no metric — because it is asking what the
+    # store renamed one to — cannot be asked here. The table exists:
+    # `show tables` lists specmatrix_otlp_unit_bytes, which is itself the
+    # answer, but it is not an answer this suite can read through PromQL.
+    unsupported:
+      otlp-metrics/unit-suffix-on-metric-name: >-
+        GreptimeDB's PromQL requires a metric matcher in every selector, so a
+        selector that names no metric is a syntax error. `show tables` shows the
+        metric stored as specmatrix_otlp_unit_bytes, so the suffix is appended.
+    ingest:
+      request: POST /v1/otlp/v1/metrics
+    readback:
+      request: GET /v1/prometheus/api/v1/query
+      params:
+        query: '{{ series_selector }}'
+        # The instant to ask about, which a check may set. Defaults to now.
+        # Without it, the one case that timestamps a sample in the future is
+        # asked about the present and reads as data the store lost.
+        time: '{{ query_time_s }}'
+      records: /data/result
+      fields:
+        value: /value/1
+        labels: /metric
+        # A native histogram comes back under `histogram` rather than `value`,
+        # with its count nested inside. Only the exponential-histogram check
+        # asks for this, and it is a rename like any other.
+        count: /histogram/1/count
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000

@@ -64,3 +64,48 @@ protocols:
         # user gets, so the offset is what is measured. Waiting changes nothing
         # about what VictoriaMetrics does with a payload.
         timeout_ms: 60000
+
+  # Confirmed by hand on 2026-09-09. JSON is refused at the door:
+  #
+  #   $ curl -X POST localhost:8428/opentelemetry/v1/metrics \
+  #       -H 'Content-Type: application/json' --data-binary @gauge.json
+  #   json encoding isn't supported for opentelemetry format. Use protobuf encoding
+  #
+  # OTLP makes JSON a SHOULD rather than a MUST, so this is a deviation from a
+  # recommendation and not a conformance failure; the runner encodes the
+  # corpus's JSON as protobuf and the cases get real verdicts anyway.
+  otlp-metrics:
+    formats: [otlp-metrics-protobuf]
+    ingest:
+      request: POST /opentelemetry/v1/metrics
+    readback:
+      request: GET /api/v1/query
+      params:
+        query: '{{ series_selector }}'
+        # The instant to ask about, which a check may set. Defaults to now.
+        # Without it, the one case that timestamps a sample in the future is
+        # asked about the present and reads as data the store lost.
+        time: '{{ query_time_s }}'
+      records: /data/result
+      fields:
+        value: /value/1
+        labels: /metric
+        # A native histogram comes back under `histogram` rather than `value`,
+        # with its count nested inside. Only the exponential-histogram check
+        # asks for this, and it is a rename like any other.
+        count: /histogram/1/count
+      poll:
+        interval_ms: 1000
+        # Sixty seconds because of search.latencyOffset, which defaults to 30s:
+        # an instant query at time T only considers data up to T-30s, so a
+        # sample written now is invisible for half a minute however fast the
+        # ingest path is. Confirmed by hand on 2026-09-09 — /api/v1/series
+        # listed the series immediately while /api/v1/query returned an empty
+        # vector, and the same query answered normally forty seconds later.
+        #
+        # Waiting it out rather than starting the container with
+        # -search.latencyOffset=0. Lowering it would make the suite faster and
+        # would be the corpus arranging its own result: the offset is what a
+        # user gets, so the offset is what is measured. Waiting changes nothing
+        # about what VictoriaMetrics does with a payload.
+        timeout_ms: 60000

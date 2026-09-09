@@ -1,0 +1,59 @@
+id: otlp-metrics/gauge-negative-zero
+protocol: otlp-metrics
+title: A gauge data point whose value is negative zero
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.3.0
+  section: number-data-point
+  text: >
+    `as_double` is an IEEE 754 double, in which -0.0 and 0.0 are distinct
+    values with distinct bit patterns. A store that returns 0.0 for a point
+    sent as -0.0 has changed the value it was given.
+  observed:
+    - https://github.com/grafana/mimir/issues/16539
+
+send:
+  format: otlp-metrics-json
+  # Both encodings, and the reason is the difference between OTLP and
+  # remote-write. proto3 omits a plain scalar field holding its default value,
+  # and -0.0 == 0.0 is true, which is why a remote-write Sample cannot carry a
+  # negative zero at all. An OTLP data point's value is a *oneof* member, and a
+  # set oneof is always written — so the sign survives protobuf here. Confirmed
+  # by encoding and decoding, not assumed.
+  encodings: [otlp-metrics-json, otlp-metrics-protobuf]
+  body: cases/otlp-metrics/gauge-negative-zero.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    series: specmatrix_otlp_negzero
+    on:
+      - field: value
+        as: float
+
+notes: >
+  Compared by bit pattern, not numerically: -0.0 == 0.0 is true in IEEE 754, so
+  an ordinary equality check would pass whatever the store did.
+
+  Measured 2026-09-09:
+
+    prometheus 3.14.0        PASS   /api/v1/query returns "-0"
+    greptimedb 1.2.0         PASS   returns "-0"
+    mimir 3.2.0              ALTER  returns "0"
+    victoriametrics 1.151.0  ALTER  returns "0"
+
+  Confirmed by hand outside the runner as well: the same export sent to
+  Prometheus and to Mimir and queried identically returns "-0" and "0". Filed
+  with Mimir as grafana/mimir#16539, phrased modestly — for almost every metric
+  the two mean the same thing, and it is worth reporting only because Mimir
+  aims at Prometheus compatibility and this is the same input through the same
+  protocol giving a different answer with nothing said about it.
+
+  Worth knowing when reading this row against the remote-write suite, which has
+  no negative-zero case at all: a remote-write Sample carries its value in a
+  plain double field, and proto3 omits a scalar equal to its default, so the
+  sign never survives the wire. An OTLP data point's value is a oneof member,
+  and a set oneof is always written. The check can exist here and cannot exist
+  there, and that is a fact about the protocols rather than about any store.

@@ -1,0 +1,44 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "specmatrix"
+            }
+          }
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {
+            "name": "specmatrix"
+          },
+          "metrics": [
+            {
+              "name": "specmatrix_otlp_nan",
+              "gauge": {
+                "dataPoints": [
+                  {
+                    "timeUnixNano": "{{ now_ns }}",
+                    "asDouble": "NaN",
+                    "attributes": [
+                      {
+                        "key": "specmatrix_run",
+                        "value": {
+                          "stringValue": "{{ run_key }}"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

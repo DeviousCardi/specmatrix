@@ -1,0 +1,57 @@
+id: otlp-metrics/exponential-histogram
+protocol: otlp-metrics
+title: An exponential histogram is accepted or refused, not silently dropped
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.3.0
+  section: exponential-histogram-data-point
+  text: >
+    ExponentialHistogram is a first-class OTLP metric type and is what an SDK
+    emits by default for some instruments. A store with no representation for
+    it may reasonably refuse the export; accepting it and storing nothing tells
+    the sender its data arrived when it did not.
+  observed:
+    - https://github.com/VictoriaMetrics/VictoriaMetrics/issues/11528
+    - https://github.com/GreptimeTeam/greptimedb/issues/8887
+
+send:
+  format: otlp-metrics-json
+  encodings: [otlp-metrics-json, otlp-metrics-protobuf]
+  body: cases/otlp-metrics/exponential-histogram.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: present
+    series: specmatrix_otlp_exphist
+    on:
+      # `count`, not `value`. Prometheus stores this as a native histogram, and
+      # a native histogram comes back under `histogram` rather than `value` —
+      # the adapter maps the two pointers separately. A store that converted it
+      # to a classic histogram instead answers the same question at the same
+      # field, which is what makes the row comparable across columns.
+      - field: count
+        as: float
+
+notes: >
+  Prometheus has native histograms and can hold this; a store that maps
+  everything to classic histograms has to choose between converting, refusing,
+  and dropping. Which one it chose is the row.
+
+  Measured 2026-09-09:
+
+    prometheus 3.14.0        PASS   stored as a native histogram
+    mimir 3.2.0              PASS   stored as a native histogram
+    greptimedb 1.2.0         ALTER  accepted, nothing stored
+    victoriametrics 1.151.0  ALTER  accepted, nothing stored
+
+  Both drops confirmed with a control in the same export. Handled differently
+  because the upstream situations differ. VictoriaMetrics documents converting
+  exponential histograms to its own vmrange format, and no series appears under
+  any name — no series anywhere carries a vmrange label — so that is filed as
+  VictoriaMetrics#11528. GreptimeDB merged cumulative exponential histogram
+  support in #8900 and has an open tracking issue, #8887, for native histogram
+  stabilisation and deferred follow-up; this looks like part of that work
+  rather than something unreported, so it is linked and recorded instead of
+  filed again.

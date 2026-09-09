@@ -139,6 +139,21 @@ pub struct ReadbackExpect {
     /// Rendered into the adapter's read-back as `{{ series }}`, so which query
     /// finds a named series stays the adapter's business.
     pub series: Option<String>,
+    /// The name the store files this metric under, when it is not the name the
+    /// check sent.
+    ///
+    /// Translating a protocol renames things, legitimately and by
+    /// specification: an OTLP monotonic sum becomes a Prometheus `_total`
+    /// series, a histogram becomes `_count`, `_sum` and `_bucket`, and a unit
+    /// becomes a suffix. `series:` names the metric in the payload, so the
+    /// check can read what it sent; this names the series to query. Without
+    /// the pair, a check asserting on a translated metric reports the rename
+    /// as the record having vanished — which is what it did before this
+    /// existed.
+    ///
+    /// A value containing `{` is used as the selector verbatim, for the rare
+    /// check whose question the generated selector cannot express.
+    pub stored_as: Option<String>,
     /// The instant to ask about, rendered as `{{ query_time_s }}`. Defaults to
     /// now, which is what every check wants except one: a sample deliberately
     /// timestamped in the future cannot be found by a query at the present,

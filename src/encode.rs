@@ -22,6 +22,7 @@ pub fn to_wire(native: &str, encoding: &str, payload: &[u8]) -> Result<Vec<u8>> 
     match (native, encoding) {
         ("otlp-json", "otlp-protobuf") => otlp_logs_json_to_protobuf(payload),
         ("remote-write-json", "remote-write-protobuf") => crate::remote_write::to_wire(payload),
+        ("otlp-metrics-json", "otlp-metrics-protobuf") => otlp_metrics_json_to_protobuf(payload),
         _ => anyhow::bail!("no encoder from {native} to {encoding}"),
     }
 }
@@ -42,8 +43,8 @@ pub fn headers_for(encoding: &str) -> &'static [(&'static str, &'static str)] {
             ("Content-Encoding", "snappy"),
             ("X-Prometheus-Remote-Write-Version", "0.1.0"),
         ],
-        "otlp-protobuf" => &[("Content-Type", "application/x-protobuf")],
-        "otlp-json" => &[("Content-Type", "application/json")],
+        "otlp-protobuf" | "otlp-metrics-protobuf" => &[("Content-Type", "application/x-protobuf")],
+        "otlp-json" | "otlp-metrics-json" => &[("Content-Type", "application/json")],
         "es-ndjson" => &[("Content-Type", "application/x-ndjson")],
         _ => &[],
     }
@@ -60,6 +61,199 @@ fn otlp_logs_json_to_protobuf(payload: &[u8]) -> Result<Vec<u8>> {
     let request: ExportLogsServiceRequest = serde_json::from_slice(payload)
         .context("decoding OTLP JSON into ExportLogsServiceRequest")?;
     Ok(request.encode_to_vec())
+}
+
+/// Metrics take the same route as logs and for the same reason: two of the four
+/// metric stores refuse JSON at the Content-Type header, and a corpus that gave
+/// up there would report a deviation from a SHOULD as five failed checks.
+///
+/// The payload is normalised first, and that step is not cosmetic. proto3's
+/// canonical JSON writes an int64 as a *string*, because a JSON number cannot
+/// hold every int64 exactly, and writes the three values IEEE 754 has and JSON
+/// does not as the strings `"NaN"`, `"Infinity"` and `"-Infinity"`. The serde
+/// implementation in `opentelemetry-proto` 0.32 accepts none of them: it does
+/// not fail, it silently leaves the field unset, and for a histogram `sum` it
+/// discards the entire metric.
+///
+/// Measured, not inferred — see `probe_otlp_metrics_values`:
+///
+/// ```text
+/// "asDouble":12.5          -> Some(AsDouble(12.5))
+/// "asDouble":"NaN"         -> None
+/// "asDouble":"Infinity"    -> None
+/// "asInt":"9223372036854775807" -> None
+/// "asInt":42               -> Some(AsInt(42))
+/// "sum":"NaN"              -> the whole metric is None
+/// ```
+///
+/// Every one of those is a value some check exists to send, so without this the
+/// runner would quietly export a data point with no value at all. It did, and
+/// it produced three false findings before this was caught: GreptimeDB refusing
+/// two exports with `No field column found`, and VictoriaMetrics appearing to
+/// turn a NaN gauge into zero. All three were this function.
+fn otlp_metrics_json_to_protobuf(payload: &[u8]) -> Result<Vec<u8>> {
+    use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
+    use prost::Message;
+
+    let mut document: serde_json::Value =
+        serde_json::from_slice(payload).context("decoding OTLP metrics JSON")?;
+    let fixups = normalise_points(&mut document);
+    let mut request: ExportMetricsServiceRequest = serde_json::from_value(document)
+        .context("decoding OTLP JSON into ExportMetricsServiceRequest")?;
+    apply_fixups(&mut request, &fixups);
+    Ok(request.encode_to_vec())
+}
+
+/// A value the decoder cannot read from JSON, to be set on the message after it
+/// has been decoded.
+#[derive(Default, Clone, Copy)]
+struct Fixup {
+    value: Option<f64>,
+    sum: Option<f64>,
+}
+
+/// The five point-carrying fields of a metric, in the order they are visited.
+/// A metric carries exactly one, so this order is also the order the decoded
+/// message presents them in — which is what lets the fixups be applied
+/// positionally.
+const POINT_KINDS: [&str; 5] = ["gauge", "sum", "histogram", "exponentialHistogram", "summary"];
+
+/// Rewrites the payload into a form the decoder accepts, returning what has to
+/// be put back afterwards, one entry per data point in traversal order.
+fn normalise_points(document: &mut serde_json::Value) -> Vec<Fixup> {
+    use serde_json::Value;
+    let mut fixups = Vec::new();
+    let Some(resources) = document.get_mut("resourceMetrics").and_then(Value::as_array_mut) else {
+        return fixups;
+    };
+    for resource in resources {
+        let Some(scopes) = resource.get_mut("scopeMetrics").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for scope in scopes {
+            let Some(metrics) = scope.get_mut("metrics").and_then(Value::as_array_mut) else {
+                continue;
+            };
+            for metric in metrics {
+                for kind in POINT_KINDS {
+                    let Some(points) = metric
+                        .get_mut(kind)
+                        .and_then(|k| k.get_mut("dataPoints"))
+                        .and_then(Value::as_array_mut)
+                    else {
+                        continue;
+                    };
+                    for point in points {
+                        fixups.push(normalise_point(point));
+                    }
+                }
+            }
+        }
+    }
+    fixups
+}
+
+fn normalise_point(point: &mut serde_json::Value) -> Fixup {
+    use serde_json::Value;
+    let mut fixup = Fixup::default();
+    // An int64 written as a string is proto3's canonical form. A JSON number
+    // holds every i64 exactly, so this one needs no fixup afterwards.
+    if let Some(text) = point.get("asInt").and_then(Value::as_str) {
+        if let Ok(number) = text.trim().parse::<i64>() {
+            point["asInt"] = Value::from(number);
+        }
+    }
+    // A float the decoder cannot read is replaced with zero and put back after
+    // decoding. Zero rather than anything else because it is a valid double and
+    // keeps the message decodable; nothing reads it in between.
+    for (field, slot) in [("asDouble", 0), ("sum", 1)] {
+        let Some(text) = point.get(field).and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(parsed) = special_float(text) else {
+            continue;
+        };
+        point[field] = Value::from(0.0);
+        if slot == 0 {
+            fixup.value = Some(parsed);
+        } else {
+            fixup.sum = Some(parsed);
+        }
+    }
+    fixup
+}
+
+/// The float values JSON has no literal for.
+///
+/// `NaN`, `Infinity` and `-Infinity` are proto3's canonical spellings. The
+/// Prometheus spellings are accepted too, so one corpus does not have to write
+/// the same value two ways depending on which suite a case is in.
+fn special_float(text: &str) -> Option<f64> {
+    match text.trim() {
+        "NaN" => Some(f64::NAN),
+        "Infinity" | "+Inf" | "Inf" => Some(f64::INFINITY),
+        "-Infinity" | "-Inf" => Some(f64::NEG_INFINITY),
+        _ => None,
+    }
+}
+
+/// Puts the unreadable values back, walking the decoded message in the same
+/// order `normalise_points` walked the JSON.
+fn apply_fixups(
+    request: &mut opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest,
+    fixups: &[Fixup],
+) {
+    use opentelemetry_proto::tonic::metrics::v1::{metric::Data, number_data_point};
+    let mut next = fixups.iter();
+    for resource in &mut request.resource_metrics {
+        for scope in &mut resource.scope_metrics {
+            for metric in &mut scope.metrics {
+                match metric.data.as_mut() {
+                    Some(Data::Gauge(gauge)) => {
+                        for point in &mut gauge.data_points {
+                            let Some(fixup) = next.next() else { return };
+                            if let Some(value) = fixup.value {
+                                point.value = Some(number_data_point::Value::AsDouble(value));
+                            }
+                        }
+                    }
+                    Some(Data::Sum(sum)) => {
+                        for point in &mut sum.data_points {
+                            let Some(fixup) = next.next() else { return };
+                            if let Some(value) = fixup.value {
+                                point.value = Some(number_data_point::Value::AsDouble(value));
+                            }
+                        }
+                    }
+                    Some(Data::Histogram(histogram)) => {
+                        for point in &mut histogram.data_points {
+                            let Some(fixup) = next.next() else { return };
+                            if let Some(value) = fixup.sum {
+                                point.sum = Some(value);
+                            }
+                        }
+                    }
+                    Some(Data::ExponentialHistogram(histogram)) => {
+                        for point in &mut histogram.data_points {
+                            let Some(fixup) = next.next() else { return };
+                            if let Some(value) = fixup.sum {
+                                point.sum = Some(value);
+                            }
+                        }
+                    }
+                    Some(Data::Summary(summary)) => {
+                        for point in &mut summary.data_points {
+                            let Some(fixup) = next.next() else { return };
+                            if let Some(value) = fixup.sum {
+                                point.sum = value;
+                            }
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
 }
 
 /// The first encoding a case offers that the backend accepts.
@@ -160,6 +354,118 @@ mod tests {
         let accepted = vec!["otlp-protobuf".to_string()];
         let offered = vec!["otlp-json".to_string()];
         assert_eq!(choose_encoding(&accepted, &offered), None);
+    }
+
+    /// Every value the corpus writes must survive to the wire. These are the
+    /// exact forms `opentelemetry-proto` 0.32's serde drops on the floor, and
+    /// each one is the subject of a check, so a regression here would quietly
+    /// turn those checks into assertions about an empty data point.
+    #[test]
+    fn otlp_metrics_json_carries_the_values_json_cannot_write_as_numbers() {
+        use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
+        use opentelemetry_proto::tonic::metrics::v1::{metric::Data, number_data_point};
+        use prost::Message;
+
+        let gauge = |value: &str| {
+            format!(
+                concat!(
+                    r#"{{"resourceMetrics":[{{"scopeMetrics":[{{"metrics":[{{"name":"m","#,
+                    r#""gauge":{{"dataPoints":[{{"timeUnixNano":"1",{}}}]}}}}]}}]}}]}}"#
+                ),
+                value
+            )
+        };
+        let read = |json: String| {
+            let wire = to_wire("otlp-metrics-json", "otlp-metrics-protobuf", json.as_bytes())
+                .expect("encodes");
+            let back = ExportMetricsServiceRequest::decode(&wire[..]).expect("valid protobuf");
+            match back.resource_metrics[0].scope_metrics[0].metrics[0].data.clone() {
+                Some(Data::Gauge(g)) => g.data_points[0].value,
+                other => panic!("expected a gauge, got {other:?}"),
+            }
+        };
+
+        match read(gauge(r#""asDouble":"NaN""#)) {
+            Some(number_data_point::Value::AsDouble(v)) => assert!(v.is_nan()),
+            other => panic!("NaN was lost: {other:?}"),
+        }
+        match read(gauge(r#""asDouble":"Infinity""#)) {
+            Some(number_data_point::Value::AsDouble(v)) => assert_eq!(v, f64::INFINITY),
+            other => panic!("+Inf was lost: {other:?}"),
+        }
+        match read(gauge(r#""asDouble":"-Infinity""#)) {
+            Some(number_data_point::Value::AsDouble(v)) => assert_eq!(v, f64::NEG_INFINITY),
+            other => panic!("-Inf was lost: {other:?}"),
+        }
+        // An int64 at its maximum, written as proto3 writes it. A JSON number
+        // cannot hold this exactly, which is why the spec writes it as a string
+        // and why losing it here would have been invisible.
+        match read(gauge(r#""asInt":"9223372036854775807""#)) {
+            Some(number_data_point::Value::AsInt(v)) => assert_eq!(v, i64::MAX),
+            other => panic!("int64 max was lost: {other:?}"),
+        }
+        // Negative zero, which the remote-write wire format cannot carry at all.
+        // OTLP JSON can, and this is the encoding that lets the check exist.
+        match read(gauge(r#""asDouble":-0.0"#)) {
+            Some(number_data_point::Value::AsDouble(v)) => {
+                assert_eq!(v.to_bits(), (-0.0f64).to_bits())
+            }
+            other => panic!("negative zero was lost: {other:?}"),
+        }
+    }
+
+    /// A histogram `sum` of NaN made the decoder discard the whole metric, not
+    /// just the field, which is the most dangerous shape of this bug: the
+    /// export still encodes, and it carries nothing.
+    #[test]
+    fn a_histogram_sum_of_nan_does_not_discard_the_metric() {
+        use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
+        use opentelemetry_proto::tonic::metrics::v1::metric::Data;
+        use prost::Message;
+
+        let json = concat!(
+            r#"{"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"m","#,
+            r#""histogram":{"aggregationTemporality":2,"dataPoints":[{"timeUnixNano":"1","#,
+            r#""count":"3","sum":"NaN"}]}}]}]}]}"#
+        );
+        let wire = to_wire("otlp-metrics-json", "otlp-metrics-protobuf", json.as_bytes())
+            .expect("encodes");
+        let back = ExportMetricsServiceRequest::decode(&wire[..]).expect("valid protobuf");
+        match back.resource_metrics[0].scope_metrics[0].metrics[0].data.clone() {
+            Some(Data::Histogram(h)) => {
+                assert_eq!(h.data_points[0].count, 3);
+                assert!(h.data_points[0].sum.expect("sum present").is_nan());
+            }
+            other => panic!("the metric was discarded: {other:?}"),
+        }
+    }
+
+    /// Fixups are applied positionally, so an export carrying several points
+    /// must put each value back on the point it came from.
+    #[test]
+    fn fixups_land_on_the_points_they_came_from() {
+        use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
+        use opentelemetry_proto::tonic::metrics::v1::{metric::Data, number_data_point::Value};
+        use prost::Message;
+
+        let json = concat!(
+            r#"{"resourceMetrics":[{"scopeMetrics":[{"metrics":["#,
+            r#"{"name":"a","gauge":{"dataPoints":[{"timeUnixNano":"1","asDouble":1.5},"#,
+            r#"{"timeUnixNano":"2","asDouble":"NaN"}]}},"#,
+            r#"{"name":"b","gauge":{"dataPoints":[{"timeUnixNano":"3","asDouble":"-Infinity"}]}}"#,
+            r#"]}]}]}"#
+        );
+        let wire = to_wire("otlp-metrics-json", "otlp-metrics-protobuf", json.as_bytes())
+            .expect("encodes");
+        let back = ExportMetricsServiceRequest::decode(&wire[..]).expect("valid protobuf");
+        let metrics = &back.resource_metrics[0].scope_metrics[0].metrics;
+        let Some(Data::Gauge(a)) = metrics[0].data.clone() else { panic!("a is not a gauge") };
+        let Some(Data::Gauge(b)) = metrics[1].data.clone() else { panic!("b is not a gauge") };
+        assert!(matches!(a.data_points[0].value, Some(Value::AsDouble(v)) if v == 1.5));
+        assert!(matches!(a.data_points[1].value, Some(Value::AsDouble(v)) if v.is_nan()));
+        assert!(
+            matches!(b.data_points[0].value, Some(Value::AsDouble(v)) if v == f64::NEG_INFINITY)
+        );
     }
 
     #[test]

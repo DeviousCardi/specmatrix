@@ -1,0 +1,25 @@
+id: otlp-metrics/empty-scope-metrics
+protocol: otlp-metrics
+title: An export carrying a resource and no scope metrics is accepted
+
+rule:
+  basis: spec
+  spec: opentelemetry/otlp/1.3.0
+  section: metrics-service
+  text: >
+    `scope_metrics` is a repeated field, so zero of them is a valid
+    ResourceMetrics. A collector that flushes on a timer with nothing to send
+    emits one as ordinary traffic, and a receiver that errors on it turns a
+    normal event into an alert.
+
+send:
+  format: otlp-metrics-json
+  encodings: [otlp-metrics-json, otlp-metrics-protobuf]
+  body: cases/otlp-metrics/empty-scope-metrics.json
+
+expect:
+  ingest: accepted
+
+notes: >
+  The metrics twin of otlp-logs/empty-batch, which found a 500 in Quickwit on
+  exactly this shape.

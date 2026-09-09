@@ -259,6 +259,11 @@ fn timestamp_of(value: &Value) -> Option<i64> {
 /// finding's clothes, and one this project made before catching it.
 pub fn series_selector(name: &str, run_key_field: Option<&str>, run_key: &str) -> String {
     let matcher = run_key_field.map(|f| format!("{f}=\"{run_key}\"")).unwrap_or_default();
+    // No name at all: match this run's records whatever they are called. A
+    // check asking what a store renamed a metric to cannot name it.
+    if name.is_empty() {
+        return format!("{{{matcher}}}");
+    }
     if is_legacy_name(name) {
         format!("{name}{{{matcher}}}")
     } else {
@@ -413,7 +418,9 @@ mod tests {
     /// the chance to keep. The encoder therefore does what every other sender
     /// does rather than hand-encoding the field to preserve a sign that real
     /// traffic never carries. The check lives in the OTLP-metrics suite
-    /// instead, where the JSON encoding can express it.
+    /// instead, where a data point's value is a oneof member — and a set
+    /// oneof is written even when it holds its default, so the sign
+    /// survives there in both JSON and protobuf.
     #[test]
     fn negative_zero_cannot_cross_the_remote_write_wire() {
         for written in [r#""-0.0""#, "-0.0"] {
@@ -572,6 +579,16 @@ mod tests {
         assert_eq!(
             series_selector("specmatrix.utf8.gauge", Some("specmatrix_run"), "sm-1"),
             r#"{"specmatrix.utf8.gauge",specmatrix_run="sm-1"}"#
+        );
+    }
+
+    /// A check that names no metric still gets a selector for this run, which
+    /// is what makes "what did the store call it?" answerable.
+    #[test]
+    fn no_metric_name_selects_the_run() {
+        assert_eq!(
+            series_selector("", Some("specmatrix_run"), "sm-1"),
+            r#"{specmatrix_run="sm-1"}"#
         );
     }
 

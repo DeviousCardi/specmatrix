@@ -1,0 +1,62 @@
+id: otlp-metrics/unit-suffix-on-metric-name
+protocol: otlp-metrics
+title: Whether a metric's unit becomes part of its name
+
+rule:
+  basis: spec
+  spec: opentelemetry/compatibility/prometheus-and-openmetrics
+  section: metric-metadata
+  text: >
+    The OpenTelemetry-to-Prometheus compatibility specification says the unit
+    SHOULD be appended to the metric name as a suffix when translating an OTLP
+    metric into Prometheus form — `By` becoming `_bytes`, `s` becoming
+    `_seconds`, `1` becoming `_ratio`. It is a SHOULD, so a receiver may decline
+    it, and the two answers give a metric two different names.
+  observed:
+    - https://github.com/grafana/mimir/issues/12043
+
+send:
+  format: otlp-metrics-json
+  encodings: [otlp-metrics-json, otlp-metrics-protobuf]
+  body: cases/otlp-metrics/unit-suffix-on-metric-name.json
+
+expect:
+  ingest: accepted
+  readback:
+    # No `series:`, so the selector matches this run's records whatever they
+    # ended up called. A selector carrying the name we sent could not find a
+    # metric filed under another one, and would report a rename as a record
+    # that vanished — which is a different and much more alarming claim.
+    match: present
+    on: [labels]
+
+notes: >
+  Recorded, not judged, and the wording of the rule is why: the suffix is a
+  SHOULD. Both answers are conformant and they are not compatible with each
+  other, which is the finding — a dashboard query written against one store
+  does not work against the other, and nothing in either store's response says
+  so.
+
+  Measured 2026-09-09. One export, and the metric ends up with two names:
+
+    prometheus 3.14.0        specmatrix_otlp_unit_bytes
+    greptimedb 1.2.0         specmatrix_otlp_unit_bytes  (read over SQL; N/A here)
+    mimir 3.2.0              specmatrix_otlp_unit
+    victoriametrics 1.151.0  specmatrix_otlp_unit
+
+  Every column PASSes, because the suffix is a SHOULD and both answers are
+  conformant. The row exists so the split is visible: a dashboard query written
+  against one pair does not work against the other, and nothing in either
+  store's response says so.
+
+  Not filed anywhere, because nobody is doing anything wrong. Mimir's behaviour
+  is deliberate and configurable — otel_metric_suffixes_enabled, off by default
+  (grafana/mimir#6542), with #12043 tracking its deprecation in favour of the
+  upstream translation-strategy settings. The same split shows up in
+  otlp-metrics/sum-int64-max, where a monotonic sum gains `_total` on Prometheus
+  and GreptimeDB and does not on Mimir and VictoriaMetrics, which is why that
+  check's selector accepts both spellings rather than picking one.
+
+  GreptimeDB is N/A rather than PASS only because its PromQL requires a metric
+  matcher in every selector, so the question cannot be put through that API.
+  `show tables` answers it: the suffix is appended.

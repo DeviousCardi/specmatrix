@@ -78,3 +78,30 @@ protocols:
       poll:
         interval_ms: 1000
         timeout_ms: 30000
+
+  # Confirmed by hand on 2026-09-09: Mimir accepts OTLP JSON directly, and does
+  # not append unit suffixes to metric names — `sm_probe` with `unit: "By"`
+  # stays `sm_probe`, where Prometheus stores `sm_probe_bytes`.
+  otlp-metrics:
+    formats: [otlp-metrics-json, otlp-metrics-protobuf]
+    ingest:
+      request: POST /otlp/v1/metrics
+    readback:
+      request: GET /prometheus/api/v1/query
+      params:
+        query: '{{ series_selector }}'
+        # The instant to ask about, which a check may set. Defaults to now.
+        # Without it, the one case that timestamps a sample in the future is
+        # asked about the present and reads as data the store lost.
+        time: '{{ query_time_s }}'
+      records: /data/result
+      fields:
+        value: /value/1
+        labels: /metric
+        # A native histogram comes back under `histogram` rather than `value`,
+        # with its count nested inside. Only the exponential-histogram check
+        # asks for this, and it is a rename like any other.
+        count: /histogram/1/count
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000

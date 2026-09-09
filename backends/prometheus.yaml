@@ -33,6 +33,11 @@ container:
   command:
     - --config.file=/etc/prometheus/prometheus.yml
     - --web.enable-remote-write-receiver
+    # Prometheus 3 also accepts OTLP metrics, behind its own flag. That makes it
+    # the one store in the suite that answers both protocols at the same query
+    # endpoint, which is what makes "does a store that accepts both treat them
+    # the same" a question this corpus can actually put.
+    - --web.enable-otlp-receiver
   port: 9090
   ready:
     request: GET /-/ready
@@ -73,6 +78,46 @@ protocols:
       fields:
         value: /value/1
         labels: /metric
+      poll:
+        interval_ms: 500
+        timeout_ms: 15000
+
+  # Prometheus 3 accepts OTLP metrics behind --web.enable-otlp-receiver, and
+  # answers them at the same PromQL endpoint as remote-write. That is what
+  # makes the two suites comparable on one store: same query, two ways in.
+  #
+  # Confirmed by hand on 2026-09-09. An OTLP gauge named `sm_probe` with
+  # `unit: "By"` is stored as `sm_probe_bytes`, and `service.name` becomes the
+  # `job` label. Both are documented translations, not alterations.
+  otlp-metrics:
+    formats: [otlp-metrics-json, otlp-metrics-protobuf]
+    ingest:
+      request: POST /api/v1/otlp/v1/metrics
+    readback:
+      request: GET /api/v1/query
+      # As a parameter, not as a query string in the path. A PromQL selector
+      # carries braces and quotes, and pasting one into the path produces a 400
+      # before Prometheus reads it.
+      #
+      # `series_selector` is built by the runner from the case's `series:` and
+      # the `run_key_field` above. It has to be, because a metric name that is
+      # not a legacy identifier can only be named by PromQL's quoted form —
+      # `{"a.b.c", run="k"}` rather than `a.b.c{run="k"}` — and an adapter
+      # template cannot choose between the two.
+      params:
+        query: '{{ series_selector }}'
+        # The instant to ask about, which a check may set. Defaults to now.
+        # Without it, the one case that timestamps a sample in the future is
+        # asked about the present and reads as data the store lost.
+        time: '{{ query_time_s }}'
+      records: /data/result
+      fields:
+        value: /value/1
+        labels: /metric
+        # A native histogram comes back under `histogram` rather than `value`,
+        # with its count nested inside. Only the exponential-histogram check
+        # asks for this, and it is a rename like any other.
+        count: /histogram/1/count
       poll:
         interval_ms: 500
         timeout_ms: 15000
