@@ -27,3 +27,7 @@ notes: >
   `zone` label is dropped from the stream entirely — `{detected_level=...,
   service_name=..., specmatrix_run=...}`, no `zone` key at all, matching the
   Prometheus convention even though nothing documents that it must.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/15, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

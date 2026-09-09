@@ -30,3 +30,7 @@ notes: >
   A candidate for adjudication rather than for a verdict: two stores keeping
   different values are both defensible until someone asks the specification
   owners which is intended.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/43, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

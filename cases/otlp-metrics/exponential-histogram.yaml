@@ -66,3 +66,7 @@ notes: >
   stabilisation and deferred follow-up; this looks like part of that work
   rather than something unreported, so it is linked and recorded instead of
   filed again.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/24, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

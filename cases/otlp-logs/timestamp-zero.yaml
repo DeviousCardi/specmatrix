@@ -51,3 +51,7 @@ notes: >
   Quickwit reports one rejected record in partial_success, so it is not silent
   here — but that report is protobuf under a JSON content type, so a conformant
   client never sees it.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/21, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

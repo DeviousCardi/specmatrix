@@ -26,3 +26,7 @@ notes: >
   Confirmed against grafana/loki:3.7.7 on 2026-09-09: both lines are accepted
   and both are queryable. `present` because this records which of the two a
   store keeps, for a store that only keeps one; Loki itself keeps both.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/14, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

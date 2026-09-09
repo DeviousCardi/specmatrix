@@ -31,3 +31,7 @@ notes: >
   store sees the value, so calling a store wrong for it would be blaming it for
   the protocol. `present` shows what each one returned so a reader can see
   whether they agree.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/37, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

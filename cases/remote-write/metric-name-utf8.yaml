@@ -30,3 +30,7 @@ notes: >
   — dots to underscores, say — reads as never queryable under the name it was
   sent, which is the divergence: the data is there under a name the sender does
   not know.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/41, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

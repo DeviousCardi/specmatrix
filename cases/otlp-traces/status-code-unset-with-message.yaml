@@ -26,3 +26,7 @@ expect:
 notes: >
   `present`: whether a store keeps a message on an UNSET status is not
   settled by the specification, only that the span itself must be kept.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/36, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

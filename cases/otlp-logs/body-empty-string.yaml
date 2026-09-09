@@ -32,3 +32,7 @@ notes: >
 
   All five stores return the empty string they were given, confirmed
   2026-09-08. The answer turned out to be unanimous.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/18, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

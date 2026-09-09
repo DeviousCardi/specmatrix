@@ -51,3 +51,7 @@ notes: >
   does not refuse the record: it stores a diagnostic string about its own data
   model in the field where the log message belongs. A dashboard renders that as
   the log line, and nothing errored at ingest.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/19, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

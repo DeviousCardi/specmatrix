@@ -28,3 +28,7 @@ notes: >
   `present` rather than `exact` deliberately. Both behaviours are permitted, so
   an `exact` check would fail every store that follows the data model
   correctly. The result line shows which of the two each store chose.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/39, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

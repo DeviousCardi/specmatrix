@@ -30,3 +30,7 @@ notes: >
   a case that hard-coded one scheme would report a store as wrong for running
   the other. What the case still catches is the third behaviour: 2xx followed
   by a series that lost the label or never appeared.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/40, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.

@@ -48,3 +48,7 @@ notes: >
   indistinguishably from OpenObserve's case above — the two are not the same
   fact, and telling them apart needed a query by hand, which is recorded so
   the next reader does not have to redo it.
+
+  Adjudication opened 2026-09-09: https://github.com/DeviousCardi/specmatrix/issues/32, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the specification's
+  owners — this check stays `present` until that answer arrives.
