@@ -3,7 +3,12 @@
 # Confirmed by hand against greptime/greptimedb:v1.2.0 on 2026-09-09:
 #
 #   $ curl -s localhost:4000/status
-#   {"source_time":"2025-09-28T08:21:06Z","commit":"4bb9ceb...","version":"0.17.2",...}
+#   {"commit":"29b743ab95568a47884ef0e8c42d579f0b0222e9","branch":"",
+#    "rustc_version":"rustc 1.96.0-nightly (ac7f9ec7d 2026-03-20)",
+#    "hostname":"d7cd5e0e68af","version":"1.2.0"}
+#
+# `/status` no longer carries `source_time`; the field was present on 0.17.2
+# and is gone on 1.2.0. The version pointer is `/version`, which is unchanged.
 #
 # GreptimeDB claims the Prometheus remote-write and query APIs under a
 # /v1/prometheus prefix. It stores metrics in its own table model rather than a

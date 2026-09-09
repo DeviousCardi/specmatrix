@@ -88,7 +88,7 @@ much longer to build and is what makes the results worth citing.
 
 ## Status
 
-Not yet published. Six protocols, twelve backends and eighty-one checks run
+Not yet published. Six protocols, twelve backends and eighty checks run
 unattended from one command; the write-up that has to precede publication is
 not done.
 
@@ -108,11 +108,15 @@ duplicate label, logs the problem, counts it, and stores nothing; one accepts a
 histogram's count and sum with 200 and keeps neither. Each is recorded in the
 case that found it, with the version and the exact request.
 
-Each is filed with the project it concerns, with a reproduction that needs
-nothing but `curl` — `specmatrix encode` produces the body for the protocols
-that exist on the wire only as protobuf — and each is linked from the check
-that found it. `CONTRIBUTING.md` requires that a maintainer learns about a
-finding from their own tracker rather than from a comparison table.
+None of these has been filed yet. `docs/findings/` holds the drafts — each
+written to reproduce with `curl` alone, since `specmatrix encode` produces the
+body for the protocols that exist on the wire only as protobuf — and
+`CONTRIBUTING.md` requires every one to be filed in the backend's own tracker
+*before* it appears on a published page, so that a maintainer learns about a
+finding from their own issues rather than from a comparison table. That is the
+main reason there is no published page yet. When one is filed its issue URL
+goes in the check's `rule.observed` list, so a reader can see the bug the check
+caught.
 
 Loki's push API joined the same three log stores that already answer OTLP —
 Loki itself, VictoriaLogs, OpenObserve — read back through the same
