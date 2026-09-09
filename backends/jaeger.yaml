@@ -21,10 +21,33 @@
 # `exact`, for this reason and this reason only.
 
 name: jaeger
+# Jaeger 2.x is an OpenTelemetry Collector distribution, and it has no version
+# endpoint on either the OTLP port or the query port: `/api/version` and
+# `/api/v3/version` both 404, and `/version` is swallowed by the UI's
+# single-page-app catch-all and answers HTML. Without a version this column
+# published as a blank, which is the one thing `docs/BACKENDS.md` says a column
+# may not do — a matrix without versions is a claim about the past that reads
+# as a claim about the present.
+#
+# The version is on the Collector's internal telemetry endpoint instead, which
+# is why 8888 is published alongside the query port. Confirmed by hand against
+# jaegertracing/jaeger:2.20.0 on 2026-09-09:
+#
+#   $ curl -s localhost:8888/metrics | grep '^target_info'
+#   target_info{service_instance_id="8e20555c-5551-4cf7-a35d-551ff5eabf95",
+#               service_name="jaeger",service_version="v2.20.0"} 1
+#
+# Read with a pattern rather than a field, the same way VictoriaLogs is, since
+# the response is Prometheus text and not JSON. The captured value keeps the
+# `v` prefix the store itself reports.
+version_from:
+  request: GET http://localhost:8888/metrics
+  pattern: 'target_info\{[^}]*service_version="([^"]+)"'
+
 container:
   image: jaegertracing/jaeger:2.20.0
   port: 4318
-  extra_ports: [16686]
+  extra_ports: [16686, 8888]
   env:
     COLLECTOR_OTLP_ENABLED: "true"
   ready:
