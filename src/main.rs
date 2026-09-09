@@ -117,6 +117,40 @@ enum Command {
     },
 }
 
+/// The most recent prior run of `suite` under `results_dir`, strictly before
+/// `current_generated`'s own date — so a rerun on the same day as a previous
+/// one, or a re-render of an existing matrix.json, never compares against
+/// itself. `results/<date>/<suite>/` is the layout every `matrix` and
+/// `render` invocation writes, so this reads back exactly what was written.
+fn find_previous_run(
+    results_dir: &std::path::Path,
+    suite: &str,
+    current_generated: &str,
+) -> Option<(String, matrix::Matrix)> {
+    let current_date = current_generated.get(..10)?;
+    let mut candidates: Vec<(String, PathBuf)> = std::fs::read_dir(results_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| {
+            let date = e.file_name().to_string_lossy().into_owned();
+            // Only a directory actually named as a date sorts and compares
+            // meaningfully against `current_date`.
+            if date.len() == 10 && date.as_str() < current_date {
+                let json = e.path().join(suite).join("matrix.json");
+                json.exists().then_some((date, json))
+            } else {
+                None
+            }
+        })
+        .collect();
+    candidates.sort_by(|a, b| a.0.cmp(&b.0));
+    let (date, json_path) = candidates.pop()?;
+    let text = std::fs::read_to_string(&json_path).ok()?;
+    let previous: matrix::Matrix = serde_json::from_str(&text).ok()?;
+    Some((format!("../../{date}/{suite}/matrix.html"), previous))
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -199,7 +233,12 @@ fn main() -> Result<()> {
                 .ok()
                 .filter(|o| o.status.success())
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-            let page = matrix.to_html(commit.as_deref());
+            let previous =
+                find_previous_run(&PathBuf::from("results"), &matrix.suite, &matrix.generated);
+            let history = previous
+                .as_ref()
+                .map(|(link, m)| matrix::History { link: link.clone(), matrix: m });
+            let page = matrix.to_html(commit.as_deref(), history.as_ref());
             let out = out.unwrap_or_else(|| path.with_file_name("matrix.html"));
             std::fs::write(&out, page).with_context(|| format!("writing {}", out.display()))?;
             println!("wrote {}", out.display());
@@ -257,9 +296,84 @@ fn main() -> Result<()> {
                 .ok()
                 .filter(|o| o.status.success())
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-            std::fs::write(dir.join("matrix.html"), matrix.to_html(commit.as_deref()))?;
+            let previous =
+                find_previous_run(&PathBuf::from("results"), &matrix.suite, &matrix.generated);
+            let history = previous
+                .as_ref()
+                .map(|(link, m)| matrix::History { link: link.clone(), matrix: m });
+            std::fs::write(
+                dir.join("matrix.html"),
+                matrix.to_html(commit.as_deref(), history.as_ref()),
+            )?;
             println!("wrote {}/matrix.{{json,md,html}}", dir.display());
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("specmatrix-find-previous-{name}-{:x}", rand::random::<u64>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_matrix(results_dir: &std::path::Path, date: &str, suite: &str) {
+        let dir = results_dir.join(date).join(suite);
+        std::fs::create_dir_all(&dir).unwrap();
+        let m = matrix::Matrix::new(
+            suite,
+            vec![],
+            chrono::DateTime::parse_from_rfc3339(&format!("{date}T00:00:00Z"))
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        );
+        std::fs::write(dir.join("matrix.json"), serde_json::to_string(&m).unwrap()).unwrap();
+    }
+
+    /// Among several prior runs, the most recent one strictly before the
+    /// current date is chosen — not the first found, not the oldest.
+    #[test]
+    fn the_most_recent_prior_run_before_today_is_chosen() {
+        let dir = scratch_dir("several");
+        write_matrix(&dir, "2026-01-01", "otlp-logs");
+        write_matrix(&dir, "2026-04-01", "otlp-logs");
+        write_matrix(&dir, "2026-07-01", "otlp-logs");
+        let (link, previous) = find_previous_run(&dir, "otlp-logs", "2026-09-08T00:00:00+00:00")
+            .expect("a previous run exists");
+        assert_eq!(&previous.generated[..10], "2026-07-01");
+        assert!(link.contains("2026-07-01"), "{link}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A run on or after the current date is never picked as "previous" —
+    /// including a rerun on the same day, which must not compare against
+    /// itself.
+    #[test]
+    fn a_run_on_or_after_the_current_date_is_never_previous() {
+        let dir = scratch_dir("same-day");
+        write_matrix(&dir, "2026-09-08", "otlp-logs");
+        assert!(find_previous_run(&dir, "otlp-logs", "2026-09-08T00:00:00+00:00").is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A previous run of a different suite is never mistaken for this one's
+    /// history.
+    #[test]
+    fn a_different_suites_run_is_not_history() {
+        let dir = scratch_dir("other-suite");
+        write_matrix(&dir, "2026-07-01", "es-bulk");
+        assert!(find_previous_run(&dir, "otlp-logs", "2026-09-08T00:00:00+00:00").is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn no_results_directory_at_all_is_simply_no_history() {
+        let dir = std::env::temp_dir().join("specmatrix-find-previous-does-not-exist");
+        assert!(find_previous_run(&dir, "otlp-logs", "2026-09-08T00:00:00+00:00").is_none());
     }
 }

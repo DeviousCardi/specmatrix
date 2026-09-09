@@ -247,6 +247,30 @@ Two `container:` fields exist for settings a CLI flag cannot reach:
   in the API says so — only `docker logs` names the bound address, and every
   ingest from outside answers a bare connection reset with no HTTP status.
 
+## Quarterly reruns
+
+A matrix without a date is a claim about the past that reads as a claim about
+the present. `.github/workflows/matrix.yml` runs every suite on the first day
+of each quarter (or on demand) and opens a pull request adding
+`results/<date>/<suite>/matrix.{json,md,html}` — never pushed straight to
+main, because bumping every image tag and re-confirming each adapter by hand
+against `docs/BACKENDS.md` is a maintainer's own step, not something the
+workflow can do for them. That is the cost of a column, and the reason the
+roster is capped.
+
+`tools/check_confirmation_age.py` reads the "Confirmed by hand against
+`<image>` on `<date>`" comment every adapter opens with, rather than adding a
+second machine-only field that could drift from it, and reports how old each
+one is. It never fails the job — a stale adapter is not a build failure, it
+is something a maintainer needs to see and either re-confirm or explain — and
+its report goes into the quarterly pull request body so a stale column is
+never silently carried forward as current.
+
+`Matrix::to_html` compares each cell against the most recent prior run of the
+same suite under `results/` and, where a verdict changed, links back to it —
+the strongest evidence this project can offer that a finding is acted on is a
+cell moving from `ALTER` to `PASS` with the version it changed at.
+
 ## Reporting a divergence
 
 Findings are worth more filed than tabulated.
