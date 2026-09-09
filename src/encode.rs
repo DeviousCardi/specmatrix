@@ -75,7 +75,7 @@ fn otlp_logs_json_to_protobuf(payload: &[u8]) -> Result<Vec<u8>> {
 /// not fail, it silently leaves the field unset, and for a histogram `sum` it
 /// discards the entire metric.
 ///
-/// Measured, not inferred — see `probe_otlp_metrics_values`:
+/// Measured, not inferred — see the tests in this module:
 ///
 /// ```text
 /// "asDouble":12.5          -> Some(AsDouble(12.5))
@@ -88,9 +88,19 @@ fn otlp_logs_json_to_protobuf(payload: &[u8]) -> Result<Vec<u8>> {
 ///
 /// Every one of those is a value some check exists to send, so without this the
 /// runner would quietly export a data point with no value at all. It did, and
-/// it produced three false findings before this was caught: GreptimeDB refusing
+/// it produced two false findings before this was caught: GreptimeDB refusing
 /// two exports with `No field column found`, and VictoriaMetrics appearing to
-/// turn a NaN gauge into zero. All three were this function.
+/// turn a NaN gauge into zero.
+///
+/// A second, unrelated gap lives in the same decoder and cost a third finding
+/// after this one was already fixed: `ExponentialHistogramDataPoint` is the
+/// only data-point message here with no `#[serde(default)]` on its struct, so
+/// every field it has — `attributes`, `exemplars`, `startTimeUnixNano`,
+/// `scale`, `zeroCount`, `flags`, `zeroThreshold` — must be present in the
+/// JSON or the whole point silently decodes to nothing, same as above.
+/// `fill_exponential_histogram_defaults` fills them in before the point ever
+/// reaches serde. See its own doc for how this one was caught: after the
+/// finding it produced had already been filed and had to be withdrawn.
 fn otlp_metrics_json_to_protobuf(payload: &[u8]) -> Result<Vec<u8>> {
     use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
     use prost::Message;
@@ -106,7 +116,7 @@ fn otlp_metrics_json_to_protobuf(payload: &[u8]) -> Result<Vec<u8>> {
 
 /// A value the decoder cannot read from JSON, to be set on the message after it
 /// has been decoded.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 struct Fixup {
     value: Option<f64>,
     sum: Option<f64>,
@@ -144,6 +154,9 @@ fn normalise_points(document: &mut serde_json::Value) -> Vec<Fixup> {
                         continue;
                     };
                     for point in points {
+                        if kind == "exponentialHistogram" {
+                            fill_exponential_histogram_defaults(point);
+                        }
                         fixups.push(normalise_point(point));
                     }
                 }
@@ -151,6 +164,48 @@ fn normalise_points(document: &mut serde_json::Value) -> Vec<Fixup> {
         }
     }
     fixups
+}
+
+/// Fills in every field `ExponentialHistogramDataPoint` requires but its own
+/// struct does not default.
+///
+/// Every other data-point message here — `Gauge`, `Histogram`,
+/// `SummaryDataPoint` — carries `#[serde(default)]`, so a case can write only
+/// the fields it cares about. `ExponentialHistogramDataPoint` alone does not,
+/// so a missing `attributes`, `exemplars`, `startTimeUnixNano`, `scale`,
+/// `zeroCount`, `flags` or `zeroThreshold` fails to deserialize that one
+/// variant — and because it sits behind a `#[serde(flatten)]`ed oneof, the
+/// failure does not surface as an error. The whole metric decodes with `data:
+/// None`, silently, and the case exports a name with nothing behind it.
+///
+/// Confirmed by encoding, not assumed: the same message with every field
+/// listed here present decodes to 50 bytes; missing any one of them silently
+/// drops the entire data point. That produced two upstream reports of data
+/// loss that were this function's absence, not the stores'.
+fn fill_exponential_histogram_defaults(point: &mut serde_json::Value) {
+    use serde_json::{json, Value};
+    let Some(object) = point.as_object_mut() else { return };
+    for (field, default) in [
+        ("attributes", json!([])),
+        ("startTimeUnixNano", json!("0")),
+        ("count", json!("0")),
+        ("scale", json!(0)),
+        ("zeroCount", json!("0")),
+        ("flags", json!(0)),
+        ("exemplars", json!([])),
+        ("zeroThreshold", json!(0.0)),
+    ] {
+        object.entry(field).or_insert(default);
+    }
+    // `positive` and `negative` are optional at the message level, but
+    // `Buckets` itself carries no default either: a check that sets one and
+    // not the other still needs both fields of the one it sets.
+    for side in ["positive", "negative"] {
+        if let Some(Value::Object(bucket)) = object.get_mut(side) {
+            bucket.entry("offset").or_insert(json!(0));
+            bucket.entry("bucketCounts").or_insert(json!([]));
+        }
+    }
 }
 
 fn normalise_point(point: &mut serde_json::Value) -> Fixup {
@@ -411,6 +466,38 @@ mod tests {
                 assert_eq!(v.to_bits(), (-0.0f64).to_bits())
             }
             other => panic!("negative zero was lost: {other:?}"),
+        }
+    }
+
+    /// `ExponentialHistogramDataPoint` requires every field present, unlike
+    /// every other data-point message here — see the module doc. A minimal,
+    /// natural-looking payload (name, temporality, one data point with count,
+    /// sum, scale, zeroCount and one bucket) omits `attributes`, `exemplars`
+    /// and `zeroThreshold`, and without the fixup that is enough to make the
+    /// whole metric decode to nothing.
+    #[test]
+    fn an_exponential_histogram_with_only_the_natural_fields_still_decodes() {
+        use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
+        use opentelemetry_proto::tonic::metrics::v1::metric::Data;
+        use prost::Message;
+
+        let json = concat!(
+            r#"{"resourceMetrics":[{"scopeMetrics":[{"metrics":[{"name":"m","#,
+            r#""exponentialHistogram":{"aggregationTemporality":2,"dataPoints":[{"#,
+            r#""timeUnixNano":"1","count":"3","sum":6.0,"scale":0,"zeroCount":"0","#,
+            r#""positive":{"offset":0,"bucketCounts":["1","2"]}}]}}]}]}]}"#
+        );
+        let wire = to_wire("otlp-metrics-json", "otlp-metrics-protobuf", json.as_bytes())
+            .expect("encodes");
+        let back = ExportMetricsServiceRequest::decode(&wire[..]).expect("valid protobuf");
+        match back.resource_metrics[0].scope_metrics[0].metrics[0].data.clone() {
+            Some(Data::ExponentialHistogram(h)) => {
+                let point = &h.data_points[0];
+                assert_eq!(point.count, 3);
+                assert_eq!(point.sum, Some(6.0));
+                assert_eq!(point.positive.as_ref().unwrap().bucket_counts, vec![1, 2]);
+            }
+            other => panic!("the metric was discarded: {other:?}"),
         }
     }
 

@@ -25,12 +25,23 @@ expect:
   readback:
     match: present
     series: specmatrix_otlp_exphist
+    # A regex, because the metric is filed under two different shapes.
+    # Prometheus and Mimir store it as a native histogram under the bare name;
+    # VictoriaMetrics and GreptimeDB convert it to a classic histogram and file
+    # the count under `_count`, alongside `_sum` and vmrange-labelled
+    # `_bucket` series. Confirmed by hand on 2026-09-09 against all four —
+    # querying the bare name alone leaves VM and GreptimeDB permanently
+    # `accepted but never became queryable`, which is the read-back failing to
+    # find a record that is genuinely there, not the store dropping it.
+    stored_as: '{__name__=~"specmatrix_otlp_exphist(_count)?",specmatrix_run="{{ run_key }}"}'
     on:
-      # `count`, not `value`. Prometheus stores this as a native histogram, and
-      # a native histogram comes back under `histogram` rather than `value` —
-      # the adapter maps the two pointers separately. A store that converted it
-      # to a classic histogram instead answers the same question at the same
-      # field, which is what makes the row comparable across columns.
+      # `count`, read at the native-histogram pointer. On the two columns that
+      # convert to a classic histogram the selector still finds the `_count`
+      # series — the record is present, which is what decides PASS here — but
+      # this pointer does not resolve against it, since a classic conversion
+      # answers as an ordinary vector rather than a native histogram. The
+      # result line reports that honestly as `<absent>` rather than pretending
+      # the two shapes are one field.
       - field: count
         as: float
 
