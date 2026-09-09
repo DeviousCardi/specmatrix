@@ -1,0 +1,77 @@
+name: dogfood
+
+# Runs this repository's own `action.yml` against every declared (backend,
+# suite) pair, using the pull request's own binary and corpus rather than a
+# published release — so a case or adapter that is wrong goes red before it
+# reaches a tag, on the columns already committed here.
+#
+# Only for pull requests on this repository, not forks: the corpus-fetch step
+# inside the action asks for the pull request's SHA from this repository, and
+# a fork's commits do not exist here until the branch is pushed to it. A fork
+# PR still gets the fast static checks in ci.yml on every commit; this workflow
+# adds the containers.
+on:
+  pull_request:
+    paths:
+      - "cases/**"
+      - "backends/**"
+      - "action.yml"
+      - "tools/summarize.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dogfood-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      pairs: ${{ steps.pairs.outputs.pairs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: pairs
+        run: echo "pairs=$(python3 tools/list_backend_protocols.py)" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: matrix
+    if: needs.matrix.outputs.pairs != '[]'
+    runs-on: ubuntu-latest
+    # Twenty (backend, suite) pairs run as one matrix, all restoring and
+    # saving the same Rust build cache at once — measured contention pushed
+    # one leg past 20 minutes with nothing wrong, just queued behind others.
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        pair: ${{ fromJson(needs.matrix.outputs.pairs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo build --release
+
+      - name: start ${{ matrix.pair.backend }}
+        id: up
+        run: |
+          url="$(cargo run --release -q -- up --backend ${{ matrix.pair.backend }} \
+            | sed -n 's/^.* ready at //p')"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      # The action itself, exercised the same way an external caller would
+      # use it — `ref`/`binary-path` are the two escape hatches that exist
+      # only for this job, so this run reads the pull request's own corpus
+      # and binary instead of the last published release.
+      - uses: ./
+        with:
+          backend: ${{ matrix.pair.backend }}
+          suite: ${{ matrix.pair.suite }}
+          url: ${{ steps.up.outputs.url }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          binary-path: target/release/specmatrix
+
+      - if: always()
+        run: cargo run --release -q -- down --backend ${{ matrix.pair.backend }}

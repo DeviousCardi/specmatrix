@@ -269,6 +269,7 @@ mod tests {
                     title: String::new(),
                     verdict,
                     detail: detail.to_string(),
+                    allowed_reason: None,
                 })
                 .collect(),
         }

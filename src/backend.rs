@@ -53,6 +53,17 @@ pub struct Backend {
     /// difference between measuring the backend and measuring a race.
     pub setup_verify: Option<Verify>,
     pub teardown: Option<Request>,
+    /// Case ids a maintainer has read and accepted, each with a one-line
+    /// reason. Read by the CI action (`Part H` of the 1.0 plan), never by the
+    /// runner's own verdict logic: a verdict here is decided from the wire
+    /// alone, the same as every other column, so a badly behaved backend
+    /// cannot quietly turn its own `ALTER` into a `PASS` by adding an entry.
+    /// What `allow` changes is only how the action's job summary presents the
+    /// result — the allowed cases move to their own section instead of
+    /// reading as unreviewed failures — because the job already never fails
+    /// on a verdict, only on a harness error.
+    #[serde(default)]
+    pub allow: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
