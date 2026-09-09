@@ -86,21 +86,40 @@ much longer to build and is what makes the results worth citing.
 
 ## Status
 
-Not yet published. Two protocols, six backends and twenty-three checks run
-unattended from one command; the write-up and the upstream filings that have to
-precede it are not done.
+Not yet published. Four protocols, ten backends and fifty-four checks run
+unattended from one command; the write-up that has to precede publication is
+not done.
+
+Logs came first: two protocols, six stores, twenty-four checks. Metrics
+followed, and they are where silent alteration does the most damage — a wrong
+log line is one wrong line, a wrong counter is a wrong graph and a wrong alert.
+Prometheus, Grafana Mimir, GreptimeDB and VictoriaMetrics each answer both
+Prometheus remote-write and OTLP metrics, and both suites read back through the
+same query, so the columns compare two ways into the same store as well as four
+stores against each other.
 
 There are findings. Among them: one store accepts a record with an int64 body,
 discards it, and reports `rejected_log_records: 0`; one replaces invalid UTF-8
 in a log body without saying so; one writes a sentence about its own data model
-into the field that holds the log line; two answer 200 to a record they will not
-keep, one of them saying nothing at all. Each is recorded in the case that found
-it, with the version and the exact request.
+into the field that holds the log line; one answers 204 to a series carrying a
+duplicate label, logs the problem, counts it, and stores nothing; one accepts a
+histogram's count and sum with 200 and keeps neither. Each is recorded in the
+case that found it, with the version and the exact request.
 
-All seven are filed with the projects they concern, each with a reproduction
-that needs nothing but `curl`, and each linked from the check that found it —
-`CONTRIBUTING.md` requires that a maintainer learns about a finding from their
-own tracker rather than from a comparison table.
+Each is filed with the project it concerns, with a reproduction that needs
+nothing but `curl` — `specmatrix encode` produces the body for the protocols
+that exist on the wire only as protobuf — and each is linked from the check
+that found it. `CONTRIBUTING.md` requires that a maintainer learns about a
+finding from their own tracker rather than from a comparison table.
+
+Not everything that differs is a finding, and the corpus says so. A NaN sample
+dropped at ingest, an exponential histogram with no representation, a metric
+name that does or does not gain its unit as a suffix: those are recorded with
+links to the upstream decision or tracking issue, and no new issue is filed.
+Three would-be findings turned out to be this project's own bugs, and one had
+been fixed upstream two months before it was measured, on a pin that was a year
+old. That is why every column names the release it ran against and the date it
+was confirmed.
 
 [`AGENTS.md`](AGENTS.md) has the design and the rules a change has to satisfy.
 [`CONTRIBUTING.md`](CONTRIBUTING.md) has what a pull request needs.
@@ -110,7 +129,7 @@ own tracker rather than from a comparison table.
 Rust and Docker; nothing else.
 
 ```sh
-cargo test                        # 122 tests, no network, no containers
+cargo test                        # 153 tests, no network, no containers
 
 cargo run -- up   --backend loki  # start a backend from its adapter
 cargo run -- run  --backend loki --suite otlp-logs
@@ -119,6 +138,13 @@ cargo run -- down --backend loki
 # every column, starting and stopping each container itself
 cargo run -- matrix --suite otlp-logs --manage \
   --backends parseable,openobserve,quickwit,victorialogs,loki
+
+cargo run -- matrix --suite remote-write --manage \
+  --backends prometheus,mimir,greptimedb,victoriametrics
+
+# the bytes a backend actually receives, for reproducing a finding by hand
+cargo run -- encode cases/remote-write/minimal-gauge.json \
+  --from remote-write-json --to remote-write-protobuf --out body.snappy
 ```
 
 `matrix` writes `matrix.json`, `matrix.md` and a static `matrix.html` under
