@@ -1,0 +1,35 @@
+id: loki-push/out-of-order-within-stream
+protocol: loki-push
+title: Two lines in one stream, sent newest first
+
+rule:
+  basis: de-facto
+  reference: grafana-loki/3.7.7
+  section: out-of-order-writes
+  text: >
+    Loki historically rejected out-of-order writes within a stream unless
+    -ingester.unordered-writes is enabled. Refusing is conformant for a store
+    that has not turned it on; what is not conformant is answering 2xx and
+    keeping only the line that happened to arrive in order.
+
+send:
+  format: loki-json
+  body: cases/loki-push/out-of-order-within-stream.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: present
+    on: [line]
+
+notes: >
+  The gap is ten seconds, deliberately small: Loki also refuses a write that
+  arrives too far behind regardless of ordering, and a large gap would
+  conflate that rejection with this one — confirmed the hard way, on a first
+  draft of this case that used a full day's gap and was refused with "entry
+  too far behind" rather than anything about ordering.
+
+  Confirmed against grafana/loki:3.7.7 on 2026-09-09, with its default
+  configuration: accepted (204), and both lines are queryable. Recent Loki
+  defaults to accepting a modest amount of out-of-order writes rather than
+  requiring -ingester.unordered-writes to be turned on for one this small.

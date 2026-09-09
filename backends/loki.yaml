@@ -1,9 +1,9 @@
 # Adapter for Grafana Loki.
 #
-# Confirmed by hand against 3.1.1 on 2026-09-08. Loki is also the reference
-# implementation for the Loki push protocol, which arrives in 1.0; this adapter
-# covers only its OTLP endpoint, where it is one column among several rather
-# than the definition.
+# Confirmed by hand against 3.1.1 on 2026-09-08, then again against 3.7.7 on
+# 2026-09-09 when the push protocol was added. Loki is the reference
+# implementation for its own push API: there is no specification, so what this
+# adapter's cases record as `basis: de-facto` is Loki's own behaviour.
 #
 # Unlike Quickwit and VictoriaLogs it accepts OTLP in both encodings, and
 # answers 204 rather than 200 — a success either way, and the runner treats any
@@ -39,7 +39,7 @@ version_from:
   field: version
 
 container:
-  image: grafana/loki:3.1.1
+  image: grafana/loki:3.7.7
   port: 3100
   ready:
     request: GET /ready
@@ -70,6 +70,36 @@ protocols:
         timeUnixNano: /values/0/0
         severityText: /stream/severity_text
         severityNumber: /stream/severity_number
+      poll:
+        interval_ms: 500
+        timeout_ms: 30000
+
+  loki-push:
+    formats: [loki-json]
+    ingest:
+      request: POST /loki/api/v1/push
+      headers:
+        Content-Type: application/json
+    readback:
+      request: GET /loki/api/v1/query_range
+      # Unlike the OTLP endpoint, `specmatrix_run` here is a genuine stream
+      # label — every push case sets it directly in `stream`, not as an OTLP
+      # resource attribute Loki would flatten into structured metadata — so
+      # the selector can name it outright.
+      params:
+        query: '{specmatrix_run="{{ run_key }}"}'
+        start: "{{ window_start_ns }}"
+        end: "{{ window_end_ns }}"
+        limit: "10"
+      records: /data/result
+      fields:
+        line: /values/0/1
+        timestamp: /values/0/0
+        labels: /stream
+        # Confirmed by hand on 2026-09-09: structured metadata comes back
+        # inside the stream's own label set in the query response, not
+        # separately, so the pointer is the same shape as any other label.
+        metadata.trace_id: /stream/trace_id
       poll:
         interval_ms: 500
         timeout_ms: 30000

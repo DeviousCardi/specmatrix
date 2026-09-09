@@ -1,0 +1,29 @@
+id: loki-push/label-value-empty
+protocol: loki-push
+title: A stream label with an empty value
+
+rule:
+  basis: de-facto
+  reference: grafana-loki/3.7.7
+  section: labels
+  text: >
+    An empty label value is not documented as equivalent to an absent label
+    the way it is in the Prometheus data model, so both dropping it and
+    keeping it are defensible; what is not is losing the rest of the stream
+    over it.
+
+send:
+  format: loki-json
+  body: cases/loki-push/label-value-empty.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [labels]
+
+notes: >
+  Confirmed against grafana/loki:3.7.7 on 2026-09-09: accepted, and the empty
+  `zone` label is dropped from the stream entirely — `{detected_level=...,
+  service_name=..., specmatrix_run=...}`, no `zone` key at all, matching the
+  Prometheus convention even though nothing documents that it must.

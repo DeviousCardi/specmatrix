@@ -1,0 +1,27 @@
+id: loki-push/empty-push
+protocol: loki-push
+title: A push request with no streams at all
+
+rule:
+  basis: de-facto
+  reference: grafana-loki/3.7.7
+  section: push-api
+  text: >
+    Unlike remote-write's WriteRequest or an OTLP export, Loki's push API is
+    JSON rather than a protobuf message with a repeated field explicitly legal
+    at zero length, and nothing documents zero streams as a defined shape. What
+    Loki itself does with it is the only rule there is to cite.
+
+send:
+  format: loki-json
+  body: cases/loki-push/empty-push.json
+
+expect:
+  ingest: rejected
+
+notes: >
+  Confirmed against grafana/loki:3.7.7 on 2026-09-09: refused with
+  `422 error at least one valid stream is required for ingestion`. Recorded
+  rather than treated as the OTLP/remote-write pattern of "empty is ordinary
+  traffic": Loki's own reference behaviour is to refuse it, so a receiver
+  that refuses it too is agreeing with the reference, not failing a rule.

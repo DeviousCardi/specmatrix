@@ -1,0 +1,1 @@
+{"streams":[{"stream":{"service_name":"specmatrix","specmatrix_run":"{{ run_key }}"},"values":[["{{ now_ns }}","line with metadata",{"trace_id":"deadbeef12345678"}]]}]}

@@ -1,0 +1,32 @@
+id: loki-push/timestamp-older-than-window
+protocol: loki-push
+title: A line older than the ingest window is refused, not silently dropped
+
+rule:
+  basis: de-facto
+  reference: grafana-loki/3.7.7
+  section: rejection
+  text: >
+    Loki refuses a line whose timestamp is older than the configured
+    acceptance window with a 400 naming the cutoff. A record the store will
+    not keep has a conformant answer available — refuse it — and this is the
+    de-facto reference for what that answer looks like when it names the
+    reason.
+
+send:
+  format: loki-json
+  body: cases/loki-push/timestamp-older-than-window.json
+
+expect:
+  ingest: rejected
+
+notes: >
+  Confirmed against grafana/loki:3.7.7 on 2026-09-09: a line 30 days old is
+  refused with `400 entry ... has timestamp too old ..., oldest acceptable
+  timestamp is: <cutoff>`. The reason is named in the body, which is the
+  standard this check exists to hold other push-API implementations to.
+
+  OpenObserve v0.92.2: ALTER. Accepted (204) rather than refused; consistent
+  with the ingest-window behaviour already documented in this adapter's
+  header comment and in otlp-logs/timestamp-outside-ingest-window — OpenObserve
+  does not refuse an old timestamp at the door.

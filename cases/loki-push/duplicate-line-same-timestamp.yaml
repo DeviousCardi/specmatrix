@@ -1,0 +1,28 @@
+id: loki-push/duplicate-line-same-timestamp
+protocol: loki-push
+title: Two different lines at the same timestamp in one stream
+
+rule:
+  basis: de-facto
+  reference: grafana-loki/3.7.7
+  section: push-api
+  text: >
+    A stream can carry two entries at the same nanosecond with different
+    content — a burst of events with coarser wall-clock resolution than the
+    field, say. There is no rule requiring one timestamp to hold one line, so
+    both are expected to survive.
+
+send:
+  format: loki-json
+  body: cases/loki-push/duplicate-line-same-timestamp.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [line]
+
+notes: >
+  Confirmed against grafana/loki:3.7.7 on 2026-09-09: both lines are accepted
+  and both are queryable. `present` because this records which of the two a
+  store keeps, for a store that only keeps one; Loki itself keeps both.

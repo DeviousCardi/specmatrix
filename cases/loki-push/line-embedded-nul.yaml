@@ -1,0 +1,34 @@
+id: loki-push/line-embedded-nul
+protocol: loki-push
+title: A log line containing an embedded NUL byte
+
+rule:
+  basis: de-facto
+  reference: grafana-loki/3.7.7
+  section: push-api
+  text: >
+    A NUL byte in a log line is unusual but not invalid UTF-8 — U+0000 is a
+    valid Unicode scalar value — and a binary payload logged as text can
+    legitimately contain one. What is checked is that the store keeps it
+    rather than truncating the line at the byte.
+
+send:
+  format: loki-json
+  body: cases/loki-push/line-embedded-nul.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [line]
+
+notes: >
+  Confirmed against grafana/loki:3.7.7 on 2026-09-09: accepted (204), and the
+  line comes back with the NUL intact, not truncated at the byte and not
+  replaced.
+
+  Sending the byte unescaped, outside a JSON string, is a different and
+  unrelated question: that makes the request body invalid JSON, and Loki
+  refuses it with 400, correctly. This check is about a NUL as log content,
+  expressed the only way JSON can carry one — the escape sequence backslash-u-
+  0000 — which is what a real logging library would produce.

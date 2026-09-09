@@ -104,6 +104,43 @@ protocols:
         interval_ms: 1000
         timeout_ms: 30000
 
+  loki-push:
+    formats: [loki-json]
+    # Confirmed by hand on 2026-09-09 against v0.92.2. openobserve/openobserve
+    # PR #7075 documents a stream-naming hierarchy — service, service_name,
+    # app, job, in that order — but every push in this version landed in the
+    # fixed stream "default" regardless of which of those labels was set, so
+    # that is what this adapter queries rather than the documented hierarchy.
+    # The push body's `values[][1]` line lands in the field `message`, not
+    # `_msg` or `body`; the timestamp comes back as `_timestamp` in
+    # microseconds, where Loki's own wire format is nanoseconds; and every
+    # stream label is flattened onto the record as a top-level column, so
+    # structured metadata and stream labels are indistinguishable once stored.
+    ingest:
+      request: POST /api/default/loki/api/v1/push
+      headers:
+        Content-Type: application/json
+    readback:
+      request: POST /api/default/_search
+      body:
+        query:
+          sql: "SELECT * FROM \"default\" WHERE specmatrix_run = '{{ run_key }}'"
+          start_time: "{{ window_start_us }}"
+          end_time: "{{ window_end_us }}"
+      records: /hits
+      fields:
+        line: /message
+        timestamp: /_timestamp
+        # There is no nested labels object to point at — every label lands as
+        # its own top-level column alongside `message` and `_timestamp` — so
+        # `labels` reads the whole record rather than a label-only subset.
+        # `present` mode only reports the difference, it does not fail on it,
+        # so this is informative rather than load-bearing.
+        labels: ""
+        metadata.trace_id: /trace_id
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000
 normalise:
   drop_fields:
     - _timestamp

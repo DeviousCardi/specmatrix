@@ -1,0 +1,28 @@
+id: loki-push/minimal-line
+protocol: loki-push
+title: An ordinary log line is written and reads back unchanged
+control: true
+
+rule:
+  basis: de-facto
+  reference: grafana-loki/3.7.7
+  section: push-api
+  text: >
+    There is no specification for Loki's push API; Loki defines it by what it
+    does. A push carrying one stream with one line and a set of labels is the
+    smallest request the API is built around, and its own documentation uses
+    exactly this shape.
+
+send:
+  format: loki-json
+  body: cases/loki-push/minimal-line.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [line]
+
+notes: >
+  The control for the Loki push suite. Until it passes, no other row in the
+  suite says anything about the backend.
