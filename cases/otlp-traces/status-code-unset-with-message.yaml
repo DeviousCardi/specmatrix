@@ -1,0 +1,28 @@
+id: otlp-traces/status-code-unset-with-message
+protocol: otlp-traces
+title: A status with code UNSET but a non-empty message
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/trace/v1
+  section: Status
+  text: >
+    When Status isn't set, it means the span's status code is unset. Nothing
+    in the message forbids a message being present on an otherwise-unset
+    status; message is meaningful primarily on Error but the field does not
+    enforce that, so carrying one here is a well-formed, if unusual, span.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/status-code-unset-with-message.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [name]
+
+notes: >
+  `present`: whether a store keeps a message on an UNSET status is not
+  settled by the specification, only that the span itself must be kept.

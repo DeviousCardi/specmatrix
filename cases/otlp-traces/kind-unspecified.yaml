@@ -1,0 +1,29 @@
+id: otlp-traces/kind-unspecified
+protocol: otlp-traces
+title: A span with no kind is SPAN_KIND_UNSPECIFIED, not malformed
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/trace/v1
+  section: Span.SpanKind
+  text: >
+    SPAN_KIND_UNSPECIFIED is enum value 0, the field's default, so a span
+    omitting `kind` entirely is a well-formed message specifying the
+    unspecified kind explicitly by omission — proto3's ordinary rule for an
+    enum default.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/kind-unspecified.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [name]
+
+notes: >
+  A store that requires a kind and refuses this span is enforcing a rule the
+  format does not have: kind is not documented as required, unlike name,
+  start_time_unix_nano and trace_id.

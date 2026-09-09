@@ -1,0 +1,82 @@
+# Adapter for Grafana Tempo, single-binary local storage.
+#
+# Confirmed by hand against grafana/tempo:3.0.3 on 2026-09-09.
+#
+# Two settings below have no CLI-flag equivalent — confirmed against the
+# binary's own -help, which exposes -storage.trace.backend but nothing for
+# the receiver — so they come from `container.config`, an inline file this
+# project's own `specmatrix up` mounts, rather than a flag on `command`.
+#
+# The OTLP receiver's `endpoint: 0.0.0.0:4318` matters and is not
+# boilerplate: without it, Tempo starts the receiver bound to 127.0.0.1 only,
+# inside the container, and every ingest from outside answers a bare
+# connection reset with no HTTP status at all. `docker logs` names the bound
+# address; nothing in the API does, and no error is more misleading than
+# "the connection reset" for a value it never validated against.
+#
+# Read-back answers real OTLP JSON, unlike Jaeger's own model — batches,
+# scopeSpans, spans, the same shape a case sends — except trace_id and span_id
+# come back base64, which is protobuf JSON's own encoding for a bytes field
+# and not a Tempo rewrite; the crate this project encodes with uses a hex
+# serializer for the same fields instead, so those two fields need comparing
+# as bytes, not as equal strings — a check on them is `present`, not `exact`.
+#
+# `/api/traces/<id>` answers 404 until the trace has flushed from the
+# ingester, which local storage does quickly; `ready.settle_ms` covers the gap
+# between the query API accepting connections and a trace sent at that moment
+# actually flushing.
+
+name: tempo
+version_from:
+  request: GET http://localhost:3200/api/status/buildinfo
+  field: version
+container:
+  image: grafana/tempo:3.0.3
+  port: 4318
+  extra_ports: [3200]
+  command: ["-config.file=/etc/specmatrix/config.yaml"]
+  config: |
+    server:
+      http_listen_port: 3200
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            http:
+              endpoint: 0.0.0.0:4318
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/traces
+        wal:
+          path: /var/tempo/wal
+  ready:
+    request: GET http://localhost:3200/ready
+    expect_status: 200
+    # Measured on 2026-09-09: /ready answers within a couple of seconds but a
+    # trace sent in the same moment can still 404 for several more while the
+    # ingester finishes starting. Margin over that gap, not a tuning of what
+    # gets measured.
+    settle_ms: 5000
+
+auth:
+  kind: none
+
+protocols:
+  otlp-traces:
+    formats: [otlp-traces-json, otlp-traces-protobuf]
+    ingest:
+      request: POST /v1/traces
+    readback:
+      request: GET http://localhost:3200/api/traces/{{ trace_id_hex }}
+      records: /batches/0/scopeSpans/0/spans
+      fields:
+        name: /name
+        traceId: /traceId
+        spanId: /spanId
+        startTimeUnixNano: /startTimeUnixNano
+        endTimeUnixNano: /endTimeUnixNano
+      poll:
+        interval_ms: 1000
+        timeout_ms: 30000

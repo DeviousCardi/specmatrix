@@ -23,6 +23,7 @@ pub fn to_wire(native: &str, encoding: &str, payload: &[u8]) -> Result<Vec<u8>> 
         ("otlp-json", "otlp-protobuf") => otlp_logs_json_to_protobuf(payload),
         ("remote-write-json", "remote-write-protobuf") => crate::remote_write::to_wire(payload),
         ("otlp-metrics-json", "otlp-metrics-protobuf") => otlp_metrics_json_to_protobuf(payload),
+        ("otlp-traces-json", "otlp-traces-protobuf") => otlp_traces_json_to_protobuf(payload),
         _ => anyhow::bail!("no encoder from {native} to {encoding}"),
     }
 }
@@ -43,8 +44,12 @@ pub fn headers_for(encoding: &str) -> &'static [(&'static str, &'static str)] {
             ("Content-Encoding", "snappy"),
             ("X-Prometheus-Remote-Write-Version", "0.1.0"),
         ],
-        "otlp-protobuf" | "otlp-metrics-protobuf" => &[("Content-Type", "application/x-protobuf")],
-        "otlp-json" | "otlp-metrics-json" => &[("Content-Type", "application/json")],
+        "otlp-protobuf" | "otlp-metrics-protobuf" | "otlp-traces-protobuf" => {
+            &[("Content-Type", "application/x-protobuf")]
+        }
+        "otlp-json" | "otlp-metrics-json" | "otlp-traces-json" => {
+            &[("Content-Type", "application/json")]
+        }
         "es-ndjson" => &[("Content-Type", "application/x-ndjson")],
         _ => &[],
     }
@@ -309,6 +314,21 @@ fn apply_fixups(
             }
         }
     }
+}
+
+/// Traces need no fixup step. `Span`, unlike `ExponentialHistogramDataPoint`,
+/// carries `#[serde(default)]` on every message in its tree, so a case can
+/// omit any field it does not care about and the decoder fills in the zero
+/// value rather than discarding the whole span — confirmed by reading the
+/// generated types rather than assumed, after the exponential-histogram
+/// lesson from the metrics encoder.
+fn otlp_traces_json_to_protobuf(payload: &[u8]) -> Result<Vec<u8>> {
+    use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
+    use prost::Message;
+
+    let request: ExportTraceServiceRequest = serde_json::from_slice(payload)
+        .context("decoding OTLP JSON into ExportTraceServiceRequest")?;
+    Ok(request.encode_to_vec())
 }
 
 /// The first encoding a case offers that the backend accepts.

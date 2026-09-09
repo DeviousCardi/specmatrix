@@ -1,0 +1,30 @@
+id: otlp-traces/end-before-start
+protocol: otlp-traces
+title: A span whose end_time is before its start_time
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/trace/v1
+  section: Span.end_time_unix_nano
+  text: >
+    Both times are semantically required and end_time >= start_time is
+    expected, not enforced by the message shape — a value smaller than
+    start_time is a well-formed message describing an impossible duration.
+    Refusing it is conformant; accepting and silently correcting it is not,
+    because a corrected duration is a fabricated measurement.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/end-before-start.json
+
+expect:
+  ingest: accepted-or-rejected
+  readback:
+    match: present
+    on: [name]
+
+notes: >
+  `present`, not `exact`: the specification says what is expected of a well-
+  formed span, not what a receiver must do when handed one that is not. The
+  row records whether a store notices at all.

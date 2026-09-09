@@ -1,0 +1,31 @@
+id: otlp-traces/name-empty
+protocol: otlp-traces
+title: A span with an empty name is not an unnamed span
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/trace/v1
+  section: Span.name
+  text: >
+    This field is semantically required to be set to a non-empty string;
+    empty value is equivalent to an unknown span name. That equivalence
+    describes what the empty string means, not that a receiver may discard
+    the span or invent a name for it.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/name-empty.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [name]
+
+notes: >
+  `present`: the specification says what an empty name means, not what a
+  store does when it renders one — substituting a placeholder like
+  "unknown_service" or "(unnamed)" is a legitimate reading of "equivalent to
+  unknown", and this row records which each store chose without calling
+  either wrong on its own.

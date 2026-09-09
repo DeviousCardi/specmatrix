@@ -1,0 +1,29 @@
+id: otlp-traces/dropped-attributes-count-nonzero
+protocol: otlp-traces
+title: A span reporting attributes it dropped, honestly
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/trace/v1
+  section: Span.dropped_attributes_count
+  text: >
+    The number of attributes that were discarded, because their keys were too
+    long or there were too many. A span reporting this alongside zero
+    attributes it kept is describing an SDK-side limit, not an error, and
+    must be accepted as such.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/dropped-attributes-count-nonzero.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [droppedAttributesCount]
+
+notes: >
+  `present`: nothing requires a store to surface this count back through its
+  query API, only to accept the span. The row records whether it is visible,
+  which is worth knowing without being a divergence on its own.

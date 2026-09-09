@@ -1,0 +1,31 @@
+id: otlp-traces/resource-without-service-name
+protocol: otlp-traces
+title: A resource with no service.name attribute
+
+rule:
+  basis: spec
+  spec: opentelemetry/resource-semantic-conventions
+  section: service.name
+  text: >
+    service.name is strongly recommended but the OTLP resource message
+    carries an arbitrary attribute list — nothing in the wire format requires
+    it, and a resource omitting it is well-formed. A store that fills in a
+    default is exercising a documented recommendation to receivers, not
+    correcting malformed input.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/resource-without-service-name.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [name]
+
+notes: >
+  `present` rather than `exact`, matching otlp-logs/resource-without-attributes:
+  what a store names the service by default — "unknown_service", empty, or
+  something else — is not settled by the wire format, only that the span
+  itself must be kept and found.

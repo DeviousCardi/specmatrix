@@ -1,0 +1,30 @@
+id: otlp-traces/attribute-int64-max
+protocol: otlp-traces
+title: A span attribute at the largest int64
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/common/v1
+  section: AnyValue.int_value
+  text: >
+    int_value is an int64. OTLP's JSON mapping writes it as a string because
+    a JSON number cannot hold every int64 exactly, and a store whose
+    attribute storage is a JSON number or a float cannot represent this value
+    without loss.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/attribute-int64-max.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [attributes.specmatrix.bignum]
+
+notes: >
+  Recorded rather than judged, like the equivalent metrics and remote-write
+  cases: any loss here is a property of a store's attribute storage, not a
+  conformance failure by itself, and the row exists so a reader can see
+  whether it agrees with the other columns.

@@ -1,0 +1,30 @@
+id: otlp-traces/parent-in-other-batch
+protocol: otlp-traces
+title: A span whose parent was sent in an earlier, separate export
+
+rule:
+  basis: spec
+  spec: opentelemetry/trace-semantics
+  section: batching
+  text: >
+    Spans of one trace routinely arrive in separate batches — different
+    services, different export intervals — and a receiver cannot require a
+    parent to have already arrived. A span naming a parent id it has not seen
+    yet must still be kept.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/parent-in-other-batch.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [name]
+
+notes: >
+  The parent id here is deliberately never sent by this suite at all, which is
+  the point: a store that requires resolving it before accepting the child
+  would refuse or drop the span, and distributed tracing depends on that never
+  being required.

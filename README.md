@@ -86,7 +86,7 @@ much longer to build and is what makes the results worth citing.
 
 ## Status
 
-Not yet published. Five protocols, ten backends and sixty-six checks run
+Not yet published. Six protocols, twelve backends and eighty-one checks run
 unattended from one command; the write-up that has to precede publication is
 not done.
 
@@ -123,6 +123,20 @@ returns for that record. And OpenObserve's push landed at
 request's example used, confirmed only by trying both against a running
 container rather than trusting the documentation.
 
+OTLP traces followed, across Jaeger, Grafana Tempo, Quickwit and OpenObserve —
+fifteen checks, none sharing a read-back shape: Tempo alone echoes OTLP's own
+span JSON (with trace and span IDs coming back base64, protobuf JSON's own
+encoding for a bytes field, so those two fields compare as bytes rather than as
+equal strings); Jaeger answers only its own query model, where a span event
+becomes a `logs[]` entry and a timestamp is microseconds rather than OTLP's
+nanoseconds; Quickwit flattens spans into search columns; and OpenObserve does
+the same but keeps a span's events as a JSON string rather than structured
+JSON, unreachable by a field pointer at all. A span event's timestamp and name
+are recorded as `present` rather than `exact` for this reason — no store here
+keeps OTLP's own shape for it, which makes the check a record of where each
+one put the data rather than a pass/fail on a shape none of them chose to
+keep.
+
 Not everything that differs is a finding, and the corpus says so. A NaN sample
 dropped at ingest, an exponential histogram with no representation, a metric
 name that does or does not gain its unit as a suffix: those are recorded with
@@ -140,7 +154,7 @@ was confirmed.
 Rust and Docker; nothing else.
 
 ```sh
-cargo test                        # 166 tests, no network, no containers
+cargo test                        # 183 tests, no network, no containers
 
 cargo run -- up   --backend loki  # start a backend from its adapter
 cargo run -- run  --backend loki --suite otlp-logs
@@ -152,6 +166,9 @@ cargo run -- matrix --suite otlp-logs --manage \
 
 cargo run -- matrix --suite remote-write --manage \
   --backends prometheus,mimir,greptimedb,victoriametrics
+
+cargo run -- matrix --suite otlp-traces --manage \
+  --backends jaeger,tempo,quickwit,openobserve
 
 # the bytes a backend actually receives, for reproducing a finding by hand
 cargo run -- encode cases/remote-write/minimal-gauge.json \

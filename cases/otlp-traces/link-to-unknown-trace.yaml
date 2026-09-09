@@ -1,0 +1,29 @@
+id: otlp-traces/link-to-unknown-trace
+protocol: otlp-traces
+title: A link naming a trace this suite never sent
+
+rule:
+  basis: spec
+  spec: opentelemetry-proto/trace/v1
+  section: Span.Link
+  text: >
+    A Link is a reference from this span to a span in the same or a different
+    trace. A different trace is the ordinary case for a link — the whole
+    reason the field exists — and it names nothing the receiver is required
+    to have seen or ever will.
+
+send:
+  format: otlp-traces-json
+  encodings: [otlp-traces-json, otlp-traces-protobuf]
+  body: cases/otlp-traces/link-to-unknown-trace.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [name]
+
+notes: >
+  The linked trace id is fabricated and never sent as a trace in its own
+  right, which is deliberate: a store that tries to resolve it before
+  accepting this span would refuse or drop ordinary cross-trace linking.

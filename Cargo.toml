@@ -18,7 +18,7 @@ include = ["src/**", "cases/**", "backends/**", "README.md", "LICENSE", "NOTICE"
 anyhow = "1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
-opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "with-serde"] }
+opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic-messages", "logs", "metrics", "trace", "with-serde"] }
 prost = "0.14"
 rand = "0.9"
 regex = "1"
