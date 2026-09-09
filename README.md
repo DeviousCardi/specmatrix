@@ -88,9 +88,14 @@ much longer to build and is what makes the results worth citing.
 
 ## Status
 
-Not yet published. Six protocols, twelve backends and eighty checks run
-unattended from one command; the write-up that has to precede publication is
-not done.
+Not yet published, and the reason is now a date rather than a task. Six
+protocols, twelve backends and eighty checks run unattended from one command.
+Every divergence is filed upstream or has a recorded reason for not being, and
+every check that records a behaviour without judging it carries an open
+adjudication issue. What is left is the one thing work cannot finish early: the
+matrix is republished quarterly, and a claim to be maintained quarterly needs a
+second quarter to have happened. `v1.0.0` waits for it; `v0.9.0` is the corpus
+as it stands.
 
 Logs came first: two protocols, six stores, twenty-four checks. Metrics
 followed, and they are where silent alteration does the most damage — a wrong
@@ -192,7 +197,7 @@ store you are willing to have written to, and read
 ## Running it in CI, without cloning this repository
 
 ```yaml
-- uses: DeviousCardi/specmatrix@v1.0.0
+- uses: DeviousCardi/specmatrix@v0.9.0
   with:
     backend: loki      # or path/to/your-adapter.yaml for one not carried here
     suite: otlp-logs
