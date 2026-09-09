@@ -73,6 +73,9 @@ check exists to find.
 
 Two implementations disagreeing is not a rule. A check moves from `present` to
 `exact` only when a rule exists, not when the disagreement gets interesting.
+[`ADJUDICATION.md`](ADJUDICATION.md) makes step 3 operational: the issue
+template to use, what the upstream question has to establish, and what
+"promote the check" actually changes.
 
 ### Do not tune a backend to fit the corpus
 

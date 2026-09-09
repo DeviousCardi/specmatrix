@@ -110,3 +110,9 @@ notes: >
   is not the same as a rule saying it must be kept, and the specification still
   does not give one. Recorded, not adjudicated — but this is now a strong
   question to put to the specification's owners rather than a curiosity.
+
+  Adjudication opened 2026-09-09:
+  https://github.com/DeviousCardi/specmatrix/issues/12, per ADJUDICATION.md.
+  Open, waiting on the upstream question being put to the OpenTelemetry
+  specification's owners — this check stays `present` until that answer
+  arrives, whichever way it goes.
