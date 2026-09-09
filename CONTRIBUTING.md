@@ -19,8 +19,11 @@ value is entirely in every entry being defensible.
 
 ### If two backends disagree and you are unsure who is right
 
-Say so in the pull request and leave the verdict out. Open an issue upstream, or
-with whoever owns the specification, and let it be settled there.
+Say so in the pull request and leave the verdict out — ship the check as
+`match: present`. Then open an issue from the `Adjudication` template and work
+through [`ADJUDICATION.md`](ADJUDICATION.md#the-process): the question goes to
+whoever owns the specification, and the check is promoted to `match: exact`
+only once they answer.
 
 A wrong verdict published under this project's name damages someone's reputation
 unfairly and destroys the project's own. Being slow is much cheaper than being

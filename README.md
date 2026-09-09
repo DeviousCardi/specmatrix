@@ -79,6 +79,8 @@ static `matrix.html` under `results/<date>/<suite>/`.
 | `src/` | The runner. Sends cases, reads back, compares, decides verdicts. |
 | `tools/` | The corpus gate CI runs. |
 | [`AGENTS.md`](AGENTS.md) | The design, and how to add a check or a backend. |
+| [`GOVERNANCE.md`](GOVERNANCE.md) | Who maintains this project, and vendor conflicts of interest. |
+| [`ADJUDICATION.md`](ADJUDICATION.md) | How a `present` check earns a rule and becomes `exact`. |
 
 The corpus is the asset. The runner is plumbing and could be rewritten in a
 weekend; a corpus of checks that each trace to a line of a specification takes
@@ -200,7 +202,14 @@ The results are only worth reading if they are not for sale.
   contribute to.
 
 A comparison written by an interested party is an advertisement. This should not
-become one.
+become one. [`GOVERNANCE.md`](GOVERNANCE.md) has who maintains this project and
+the rule for a maintainer with a vendor conflict of interest;
+[`ADJUDICATION.md`](ADJUDICATION.md) has how a check earns the right to fail a
+backend rather than only record what it did.
+
+### Funding
+
+None. If that changes, the amount and source are listed here.
 
 ## Licence
 
