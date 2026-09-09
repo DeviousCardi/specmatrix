@@ -40,7 +40,10 @@ jobs:
     needs: matrix
     if: needs.matrix.outputs.pairs != '[]'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Twenty (backend, suite) pairs run as one matrix, all restoring and
+    # saving the same Rust build cache at once — measured contention pushed
+    # one leg past 20 minutes with nothing wrong, just queued behind others.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
