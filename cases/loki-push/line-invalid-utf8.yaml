@@ -1,0 +1,55 @@
+id: loki-push/line-invalid-utf8
+protocol: loki-push
+title: A log line containing invalid UTF-8
+
+rule:
+  basis: de-facto
+  reference: grafana-loki/3.7.7
+  section: push-api
+  text: >
+    Log lines are frequently generated outside any control the store has over
+    their encoding, so refusing anything not valid UTF-8 would refuse a
+    meaningful share of real traffic. Refusing is a REJECT. Accepting and
+    replacing the bytes is an ALTER unless the backend documents the
+    replacement. Accepting and truncating the line is an ALTER regardless.
+  observed:
+    - https://github.com/grafana/loki/issues/24423
+
+send:
+  format: loki-json
+  body: cases/loki-push/line-invalid-utf8.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on: [line]
+
+notes: >
+  Confirmed against grafana/loki:3.7.7 on 2026-09-09: accepted (204), and the
+  two invalid bytes are each replaced with U+FFFD:
+
+    stored line : "before-\ufffd\ufffd-after"
+
+  This is the same substitution otlp-logs/body-invalid-utf8 already documents
+  for Loki's OTLP endpoint, now confirmed on the push API as well — the same
+  behaviour on both ingest paths of the same store. The rule permits
+  replacement only when documented; whether Loki documents it for the push API
+  specifically has not been checked, and the row is recorded as ALTER rather
+  than asserted as a defect until it is.
+
+  VictoriaLogs v1.52.0: worse, and confirmed by hand rather than taken from the
+  runner's own "never became queryable" line, which reads identically for
+  genuine data loss and for this. It accepts the write (204) and stores the two
+  invalid bytes raw, with no substitution:
+
+    $ curl "localhost:9428/select/logsql/query?query=specmatrix_run:=<key>"
+    b'{"_msg":"before-\xff\xfe-after", ...}\n'
+
+  That response is not valid UTF-8, so it is not valid JSON either — the JSON
+  text production in RFC 8259 requires UTF-8. A client using VictoriaLogs' own
+  documented query API cannot parse its own response for this record, which is
+  a step past Loki's ALTER: Loki's substitution keeps every response the API
+  promises to return actually parseable, and this does not. Recorded here
+  rather than filed, pending the note in AGENTS.md about pinning current
+  releases and searching upstream first.

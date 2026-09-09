@@ -86,7 +86,7 @@ much longer to build and is what makes the results worth citing.
 
 ## Status
 
-Not yet published. Four protocols, ten backends and fifty-four checks run
+Not yet published. Five protocols, ten backends and sixty-six checks run
 unattended from one command; the write-up that has to precede publication is
 not done.
 
@@ -112,6 +112,17 @@ that exist on the wire only as protobuf — and each is linked from the check
 that found it. `CONTRIBUTING.md` requires that a maintainer learns about a
 finding from their own tracker rather than from a comparison table.
 
+Loki's push API joined the same three log stores that already answer OTLP —
+Loki itself, VictoriaLogs, OpenObserve — read back through the same
+per-protocol query each already had. Two things worth knowing before reading
+that suite: VictoriaLogs stores an invalid-UTF-8 log line raw rather than
+substituting it the way Loki does, which makes its own query response not
+valid JSON — a documented-API client cannot parse what the documented API
+returns for that record. And OpenObserve's push landed at
+`/api/default/loki/api/v1/push` rather than the path its own merged pull
+request's example used, confirmed only by trying both against a running
+container rather than trusting the documentation.
+
 Not everything that differs is a finding, and the corpus says so. A NaN sample
 dropped at ingest, an exponential histogram with no representation, a metric
 name that does or does not gain its unit as a suffix: those are recorded with
@@ -129,7 +140,7 @@ was confirmed.
 Rust and Docker; nothing else.
 
 ```sh
-cargo test                        # 153 tests, no network, no containers
+cargo test                        # 166 tests, no network, no containers
 
 cargo run -- up   --backend loki  # start a backend from its adapter
 cargo run -- run  --backend loki --suite otlp-logs

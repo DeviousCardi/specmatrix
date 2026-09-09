@@ -1,0 +1,1 @@
+{"streams":[{"stream":{"service_name":"specmatrix","specmatrix_run":"{{ run_key }}","1zone":"a"},"values":[["{{ now_ns }}","invalid label name"]]}]}

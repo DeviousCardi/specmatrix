@@ -1,0 +1,37 @@
+id: loki-push/timestamp-nanosecond-precision
+protocol: loki-push
+title: A timestamp with a nonzero value in every one of its nine digits
+
+rule:
+  basis: de-facto
+  reference: grafana-loki/3.7.7
+  section: push-api
+  text: >
+    Loki's push API takes a timestamp as a string of nanoseconds since the
+    epoch, so nanosecond precision is the field's native resolution rather
+    than a special case a store has to preserve deliberately. What is checked
+    is that a store claiming this API keeps the digits it was given.
+
+send:
+  format: loki-json
+  body: cases/loki-push/timestamp-nanosecond-precision.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: exact
+    on:
+      - field: timestamp
+        as: timestamp
+
+notes: >
+  Confirmed against grafana/loki:3.7.7 on 2026-09-09: the sent and returned
+  timestamps match to the nanosecond.
+
+  OpenObserve v0.92.2: ALTER. The push is accepted and the value comes back as
+  a JSON number rather than the string Loki returns, at microsecond precision
+  rather than nanosecond — the trailing three digits of what was sent are
+  gone: sent ...789, read back ...(truncated to microseconds). Consistent with
+  `_timestamp` being OpenObserve's native field, which this adapter's own
+  header comment already notes is microseconds for the OTLP path; this is the
+  same limit showing up on the Loki push path too.

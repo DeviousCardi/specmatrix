@@ -70,3 +70,31 @@ protocols:
       poll:
         interval_ms: 500
         timeout_ms: 30000
+
+  loki-push:
+    formats: [loki-json]
+    # Confirmed by hand on 2026-09-09. VictoriaLogs claims the Loki push API at
+    # /insert/loki/api/v1/push and answers LogsQL rather than LogQL, so the
+    # read-back query is VictoriaLogs' own syntax even though the ingest body
+    # is Loki's. Structured metadata comes back flattened into the same record
+    # as the stream labels, same as the OTLP path above.
+    ingest:
+      request: POST /insert/loki/api/v1/push
+      headers:
+        Content-Type: application/json
+    readback:
+      request: GET /select/logsql/query?query=specmatrix_run:={{ run_key }}&limit=10
+      records: ""
+      fields:
+        line: /_msg
+        timestamp: /_time
+        # Confirmed by hand: the response is one flat object rather than a
+        # stream-plus-values pair, so `labels` is the whole record with the
+        # fields VictoriaLogs itself adds subtracted out. There is no single
+        # sub-object to point at the way Loki's own `/stream` is, so a
+        # label-shaped comparison is not attempted here; `metadata.trace_id`
+        # is, because that one field is what the case actually asserts on.
+        metadata.trace_id: /trace_id
+      poll:
+        interval_ms: 500
+        timeout_ms: 30000

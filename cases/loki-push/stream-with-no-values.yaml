@@ -1,0 +1,29 @@
+id: loki-push/stream-with-no-values
+protocol: loki-push
+title: A stream declared with no log lines
+
+rule:
+  basis: de-facto
+  reference: grafana-loki/3.7.7
+  section: push-api
+  text: >
+    `values` is a list, so an empty one is a well-formed stream carrying
+    nothing. There is nothing for a receiver to store, so accepting it and
+    doing nothing, or refusing it, are the only conformant answers — not
+    failing.
+
+send:
+  format: loki-json
+  body: cases/loki-push/stream-with-no-values.json
+
+expect:
+  ingest: accepted-or-rejected
+
+notes: >
+  Written as `accepted-or-rejected`, matching the rule above: there is
+  nothing to store either way, so both answers are conformant and this only
+  records which one a store gives.
+
+  Confirmed against grafana/loki:3.7.7 on 2026-09-09: accepted (204).
+  OpenObserve v0.92.2: refused — `400 invalid labels: Stream 0 has no log
+  entries`. Both are the behaviour this check permits.

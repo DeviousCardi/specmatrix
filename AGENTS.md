@@ -145,6 +145,12 @@ and an adapter's `formats:` says what it accepts on the wire.
 
 - `otlp-json` — real OTLP JSON, sendable with `curl` as it stands.
 - `es-ndjson` — a real `_bulk` body.
+- `loki-json` — the push body as Loki itself documents it:
+  `streams[].stream` for labels and `streams[].values` as `[timestamp_ns, line]`
+  pairs, with optional structured metadata as a third element. There is no
+  specification for this API; Loki defines it by what it does, which is why
+  `basis: de-facto, reference: grafana-loki/<version>` cites Loki's own
+  behaviour rather than a document.
 - `remote-write-json` — a JSON form of a Prometheus `WriteRequest`, because the
   protocol has no JSON on the wire and a corpus of snappy-compressed protobuf
   would be a corpus nobody can read or diff. Its rules:

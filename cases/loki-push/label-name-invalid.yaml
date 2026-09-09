@@ -1,0 +1,29 @@
+id: loki-push/label-name-invalid
+protocol: loki-push
+title: A stream label name starting with a digit
+
+rule:
+  basis: de-facto
+  reference: grafana-loki/3.7.7
+  section: labels
+  text: >
+    Loki's label names follow Prometheus's rule, [a-zA-Z_][a-zA-Z0-9_]*, and a
+    name starting with a digit is invalid under it. A push carrying one is
+    refused outright rather than accepted with the label silently dropped or
+    renamed.
+
+send:
+  format: loki-json
+  body: cases/loki-push/label-name-invalid.json
+
+expect:
+  ingest: rejected
+
+notes: >
+  Confirmed against grafana/loki:3.7.7 on 2026-09-09: refused with
+  `400 couldn't parse labels: ... unexpected character inside braces: '1'`.
+
+  OpenObserve v0.92.2: ALTER. Accepted (204) rather than refused, and the
+  label is kept as sent — `1zone` appears as a top-level column on the stored
+  record. A sender relying on refusal to catch a malformed label gets no
+  signal from OpenObserve that Loki would have given it.

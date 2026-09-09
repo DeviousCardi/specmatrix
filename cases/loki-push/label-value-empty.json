@@ -1,0 +1,1 @@
+{"streams":[{"stream":{"service_name":"specmatrix","specmatrix_run":"{{ run_key }}","zone":""},"values":[["{{ now_ns }}","label value is empty"]]}]}

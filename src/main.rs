@@ -7,6 +7,7 @@ mod compare;
 mod docker;
 mod encode;
 mod es;
+mod loki;
 mod matrix;
 mod otlp;
 mod query;

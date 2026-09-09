@@ -56,6 +56,18 @@ impl Outcome {
     }
 }
 
+/// What `read_back` found, or why it did not.
+enum ReadOutcome {
+    Found(serde_json::Value),
+    /// `unparseable` is true only if every poll's response body failed to
+    /// parse at all — never once a JSON value the runner could search. A body
+    /// that parsed and simply had no matching record sets it false, which is
+    /// the ordinary "not there yet or not there" case.
+    NotFound {
+        unparseable: bool,
+    },
+}
+
 /// One HTTP response, kept as bytes so a body can be read in whatever encoding
 /// the store actually used rather than the one it claimed.
 struct Response {
@@ -403,8 +415,10 @@ impl Runner {
         // store slower than the poll from reading as compliant here.
         if expect.match_ == "absent" {
             return Ok(match found {
-                None => (Verdict::Pass, format!("{label}absent, as the check requires")),
-                Some(_) => (
+                ReadOutcome::NotFound { .. } => {
+                    (Verdict::Pass, format!("{label}absent, as the check requires"))
+                }
+                ReadOutcome::Found(_) => (
                     Verdict::Alter,
                     format!("{label}still queryable when the check requires it to be gone"),
                 ),
@@ -412,11 +426,19 @@ impl Runner {
         }
 
         match found {
-            None => Ok((
+            ReadOutcome::NotFound { unparseable: true } => Ok((
+                Verdict::Alter,
+                format!(
+                    "{label}accepted ({status}) but the read-back response was never valid \
+                     JSON — the record may exist and be unreadable through this query rather \
+                     than lost{reported}"
+                ),
+            )),
+            ReadOutcome::NotFound { unparseable: false } => Ok((
                 Verdict::Alter,
                 format!("{label}accepted ({status}) but never became queryable{reported}"),
             )),
-            Some(record) => {
+            ReadOutcome::Found(record) => {
                 let (sent, sent_was_lossy) = parse_sent(rendered);
 
                 // Every field the check names, read once, with the kind it
@@ -671,23 +693,35 @@ impl Runner {
     ///
     /// Most backends acknowledge a write before it is queryable, so a single
     /// immediate read would report every backend as dropping data.
-    fn read_back(&self, readback: &Readback, vars: &Vars) -> Result<Option<serde_json::Value>> {
+    fn read_back(&self, readback: &Readback, vars: &Vars) -> Result<ReadOutcome> {
         let run_key = vars.get("run_key").cloned().unwrap_or_default();
         let deadline = Instant::now() + Duration::from_millis(readback.poll.timeout_ms);
+        // Tracks whether every poll's response body failed to parse at all, as
+        // opposed to parsing fine and simply not containing the record yet.
+        // The two look identical from `None` alone, and they are not the same
+        // fact: one says the record cannot be told apart from data loss, the
+        // other says the store's own documented query API cannot return this
+        // record in a form its own response format can carry. Confirmed by
+        // hand once: VictoriaLogs v1.52.0 answers a query matching a record
+        // with invalid UTF-8 in it with a response that is itself not valid
+        // UTF-8, so no conformant JSON client — this runner included — can
+        // parse it, though the record is genuinely there.
+        let mut ever_parsed = false;
         loop {
             // Built by `send_declared`, not by hand. This loop used to
             // reassemble the request itself and so quietly ignored anything
             // `send` learned to do — query parameters among them, which made a
             // correct Loki adapter read as a store that had lost the record.
             if let Ok(response) = self.send_declared(&readback.request, vars) {
-                if let Ok(value) = serde_json::from_slice::<Value>(&response.body) {
+                if let Some(value) = parse_response_body(&response.body) {
+                    ever_parsed = true;
                     if let Some(record) = first_record(&value, &readback.records, &run_key) {
-                        return Ok(Some(record));
+                        return Ok(ReadOutcome::Found(record));
                     }
                 }
             }
             if Instant::now() >= deadline {
-                return Ok(None);
+                return Ok(ReadOutcome::NotFound { unparseable: !ever_parsed });
             }
             std::thread::sleep(Duration::from_millis(readback.poll.interval_ms));
         }
@@ -803,6 +837,7 @@ fn logical_field_for(
         "es-bulk" => crate::es::logical_field(sent, field),
         "remote-write" => crate::remote_write::logical_field(sent, field, series),
         "otlp-metrics" => crate::otlp::metric_field(sent, field, series),
+        "loki-push" => crate::loki::logical_field(sent, field),
         _ => crate::otlp::logical_field(sent, field),
     }
 }
@@ -895,9 +930,41 @@ fn time_vars(
                 .timestamp()
                 .to_string(),
         ),
+        ("now_minus_10s_ns", (nanos - 10_000_000_000).to_string()),
         ("now_minus_1d_ns", (nanos - day).to_string()),
         ("now_minus_30d_ns", (nanos - 30 * day).to_string()),
     ]
+}
+
+/// Parses a read-back response body, tolerating a store that answers with
+/// newline-delimited JSON instead of one document.
+///
+/// VictoriaLogs' `/select/logsql/query` is documented to answer this way, one
+/// object per matching line, and it always has — this only became visible
+/// once a check sent two lines to the same stream. A single well-formed JSON
+/// value is tried first, since that is what every other adapter's read-back
+/// returns and the common case should not pay for the uncommon one. Falling
+/// back to NDJSON on failure, rather than trying to tell the two shapes apart
+/// up front, means an adapter never has to declare which one its backend
+/// uses: whichever comes back is read.
+fn parse_response_body(body: &[u8]) -> Option<Value> {
+    if let Ok(value) = serde_json::from_slice::<Value>(body) {
+        return Some(value);
+    }
+    let text = std::str::from_utf8(body).ok()?;
+    let mut records = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        records.push(serde_json::from_str::<Value>(line).ok()?);
+    }
+    if records.is_empty() {
+        None
+    } else {
+        Some(Value::Array(records))
+    }
 }
 
 /// Pulls this run's record out of a read-back response.
@@ -944,6 +1011,45 @@ fn first_line(text: &str) -> String {
         format!("{}…", &line[..120])
     } else {
         line.to_string()
+    }
+}
+
+#[cfg(test)]
+mod body_parsing {
+    use super::*;
+
+    #[test]
+    fn a_single_json_object_parses_as_before() {
+        let value = parse_response_body(br#"{"a":1}"#).unwrap();
+        assert_eq!(value, serde_json::json!({"a": 1}));
+    }
+
+    /// VictoriaLogs answers a match with several rows as newline-delimited
+    /// JSON, one object per line — not a JSON array. A response with two rows
+    /// used to fail `serde_json::from_slice` outright (trailing data after
+    /// the first object) and read as no result at all, which made a case
+    /// sending two lines to one stream report the whole write as lost even
+    /// though both lines were there.
+    #[test]
+    fn newline_delimited_objects_parse_as_an_array() {
+        let value = parse_response_body(b"{\"a\":1}\n{\"a\":2}\n").unwrap();
+        assert_eq!(value, serde_json::json!([{"a": 1}, {"a": 2}]));
+    }
+
+    #[test]
+    fn blank_lines_between_records_are_skipped() {
+        let value = parse_response_body(b"{\"a\":1}\n\n{\"a\":2}\n").unwrap();
+        assert_eq!(value, serde_json::json!([{"a": 1}, {"a": 2}]));
+    }
+
+    #[test]
+    fn an_empty_body_is_no_result_not_an_empty_array() {
+        assert_eq!(parse_response_body(b""), None);
+    }
+
+    #[test]
+    fn genuinely_invalid_json_stays_no_result() {
+        assert_eq!(parse_response_body(b"not json at all"), None);
     }
 }
 
@@ -1204,6 +1310,43 @@ expect:
     fn a_single_readback_still_parses_and_reads_the_same() {
         let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
         assert_eq!(case.expect.readback.as_ref().unwrap().all().len(), 1);
+    }
+
+    /// A store whose response is never valid JSON says so distinctly from one
+    /// that simply never returns the record: the record may be there and only
+    /// unreadable through the documented query, and the detail line should not
+    /// claim data loss it has not actually seen.
+    #[test]
+    fn a_response_that_never_parses_is_reported_distinctly_from_a_genuine_miss() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            (
+                "/search",
+                vec![Reply { status: 200, body: "not json".into(), content_type: "text/plain" }],
+            ),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Alter);
+        assert!(result.detail.contains("never valid JSON"), "{}", result.detail);
+        assert!(!result.detail.contains("never became queryable"), "{}", result.detail);
+    }
+
+    /// A store that parses fine and simply never shows the record keeps the
+    /// original, narrower message — it really might have lost it.
+    #[test]
+    fn a_response_that_parses_but_never_matches_keeps_the_original_message() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            ("/search", vec![Reply::json(200, r#"{"hits":[]}"#)]),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Alter);
+        assert!(result.detail.contains("never became queryable"), "{}", result.detail);
+        assert!(!result.detail.contains("never valid JSON"), "{}", result.detail);
     }
 
     /// A refusal is a REJECT carrying the status and the store's own words, so

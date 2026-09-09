@@ -1,0 +1,33 @@
+id: loki-push/structured-metadata-roundtrip
+protocol: loki-push
+title: Structured metadata attached to one line
+
+rule:
+  basis: de-facto
+  reference: grafana-loki/3.7.7
+  section: structured-metadata
+  text: >
+    A value may carry a third element, a flat object of per-line metadata
+    distinct from the stream's labels — trace and span IDs, most commonly,
+    attached without adding a new label value per line. What is checked is
+    that the key and its value survive, however the store chooses to expose
+    them.
+
+send:
+  format: loki-json
+  body: cases/loki-push/structured-metadata-roundtrip.json
+
+expect:
+  ingest: accepted
+  readback:
+    match: present
+    on: [{field: metadata.trace_id, as: string}]
+
+notes: >
+  Confirmed against grafana/loki:3.7.7 on 2026-09-09: accepted, and `trace_id`
+  comes back inside the stream's own label set in the query response rather
+  than in a separate structured-metadata field — `present` rather than `exact`
+  because nothing says it has to come back the same way it went in, only that
+  the value survives and is findable, and it is: `{... trace_id="deadbeef..."}`.
+  A store that kept it queryable only via a metadata-specific LogQL filter
+  would still pass; one that dropped it would not.
