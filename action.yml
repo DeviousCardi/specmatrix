@@ -1,0 +1,153 @@
+name: specmatrix
+description: >
+  Run a SpecMatrix conformance suite against one running backend, without
+  cloning this repository.
+author: DeviousCardi
+
+inputs:
+  backend:
+    description: >
+      Which adapter to run. Either a bare name resolved against this
+      repository's own `backends/<name>.yaml` at `version`, or a path (must
+      contain a `/`) to an adapter file already checked out in the caller's
+      own repository — for a backend not carried here.
+    required: true
+  suite:
+    description: Protocol suite, resolved to this repository's own cases/<suite>/*.yaml at `version`.
+    required: true
+  url:
+    description: Base URL of the already-running backend to test.
+    required: true
+  version:
+    description: >
+      Release tag of this project to run — pins both the runner binary and
+      the corpus (cases and built-in adapters) it is paired with, so a result
+      names an exact version of both. `latest` resolves to the newest
+      published release.
+    required: false
+    default: latest
+  ref:
+    description: >
+      Internal: overrides which commit the corpus (cases/, backends/) is
+      fetched at, independent of `version`. Used only by this repository's
+      own dogfood workflow, to run a pull request's own corpus rather than
+      the last tagged one — every other caller should leave this unset, which
+      fetches the corpus at `version` like the description above says.
+    required: false
+  binary-path:
+    description: >
+      Internal: a specmatrix binary already on disk to run instead of
+      downloading a release. Used only by this repository's own dogfood
+      workflow, which builds the pull request's own code; every other caller
+      should leave this unset.
+    required: false
+
+outputs:
+  verdict-summary:
+    description: One line — counts of pass/reject/alter/n/a — the same line the table prints.
+    value: ${{ steps.run.outputs.verdict-summary }}
+  matrix-json:
+    description: Path to the JSON result this run wrote.
+    value: ${{ steps.run.outputs.matrix-json }}
+
+runs:
+  using: composite
+  steps:
+    - name: resolve version
+      id: version
+      shell: bash
+      run: |
+        set -euo pipefail
+        version="${{ inputs.version }}"
+        if [ "$version" = "latest" ]; then
+          version="$(curl --proto '=https' --tlsv1.2 --silent --show-error --fail \
+            https://api.github.com/repos/DeviousCardi/specmatrix/releases/latest \
+            | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+          if [ -z "$version" ]; then
+            echo "::error::could not resolve the latest specmatrix release" >&2
+            exit 1
+          fi
+        fi
+        echo "resolved to $version"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    # The corpus (cases/, and the built-in backends/) is fetched at the same
+    # tag as the binary, into a directory the caller's own checkout cannot
+    # collide with. A result names one version of the runner and one version
+    # of the corpus it ran, never a mix.
+    - name: fetch the corpus at that version
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: DeviousCardi/specmatrix
+        ref: ${{ inputs.ref || steps.version.outputs.version }}
+        path: .specmatrix-corpus
+        sparse-checkout: |
+          cases
+          backends
+        sparse-checkout-cone-mode: false
+
+    - name: download the runner binary
+      if: inputs.binary-path == ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        version="${{ steps.version.outputs.version }}"
+        case "$(uname -m)" in
+          x86_64|amd64)  target=x86_64-unknown-linux-gnu ;;
+          aarch64|arm64) target=aarch64-unknown-linux-gnu ;;
+          *) echo "::error::no specmatrix release binary for $(uname -m)" >&2; exit 1 ;;
+        esac
+        archive="specmatrix-${version}-${target}.tar.gz"
+        url="https://github.com/DeviousCardi/specmatrix/releases/download/${version}/${archive}"
+        echo "downloading $url"
+        curl --proto '=https' --tlsv1.2 --location --silent --show-error --fail "$url" -o "$RUNNER_TEMP/${archive}"
+        tar -xzf "$RUNNER_TEMP/${archive}" -C "$RUNNER_TEMP"
+        chmod +x "$RUNNER_TEMP/specmatrix"
+        echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+    - name: use the given binary
+      if: inputs.binary-path != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/specmatrix-bin"
+        cp "${{ inputs.binary-path }}" "$RUNNER_TEMP/specmatrix-bin/specmatrix"
+        chmod +x "$RUNNER_TEMP/specmatrix-bin/specmatrix"
+        echo "$RUNNER_TEMP/specmatrix-bin" >> "$GITHUB_PATH"
+
+    - name: run the suite
+      id: run
+      shell: bash
+      run: |
+        set -euo pipefail
+        corpus=".specmatrix-corpus-${{ github.action_ref || 'action' }}"
+        backend_input="${{ inputs.backend }}"
+        if [[ "$backend_input" == */* ]]; then
+          # A path into the caller's own checkout: split it into the
+          # directory `--backends` reads and the bare name `--backend` names,
+          # since the CLI resolves the two together as <dir>/<name>.yaml.
+          backends_dir="$(dirname "$backend_input")"
+          backend_name="$(basename "$backend_input" .yaml)"
+        else
+          backends_dir="$corpus/backends"
+          backend_name="$backend_input"
+        fi
+
+        specmatrix run \
+          --backend "$backend_name" \
+          --backends "$backends_dir" \
+          --suite "${{ inputs.suite }}" \
+          --cases "$corpus/cases" \
+          --url "${{ inputs.url }}" \
+          --json > matrix.json
+        specmatrix run \
+          --backend "$backend_name" \
+          --backends "$backends_dir" \
+          --suite "${{ inputs.suite }}" \
+          --cases "$corpus/cases" \
+          --url "${{ inputs.url }}"
+
+        echo "matrix-json=matrix.json" >> "$GITHUB_OUTPUT"
+        python3 "${{ github.action_path }}/tools/summarize.py" matrix.json >> "$GITHUB_STEP_SUMMARY"
+        summary="$(python3 "${{ github.action_path }}/tools/summarize.py" matrix.json --line-only)"
+        echo "verdict-summary=$summary" >> "$GITHUB_OUTPUT"

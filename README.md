@@ -186,6 +186,21 @@ and deletes the stream or index each case uses before running it. Point it at a
 store you are willing to have written to, and read
 [`SECURITY.md`](SECURITY.md) first.
 
+## Running it in CI, without cloning this repository
+
+```yaml
+- uses: DeviousCardi/specmatrix@v1.0.0
+  with:
+    backend: loki      # or path/to/your-adapter.yaml for one not carried here
+    suite: otlp-logs
+    url: http://localhost:3100
+```
+
+Fails the job only on a harness error — a verdict never does, so a maintainer
+who has read and accepted a divergence names it in their adapter's `allow:`
+list rather than the job going red on a result they already know about. See
+[`AGENTS.md`](AGENTS.md#running-the-suite-without-cloning-this-repository).
+
 ## Backends
 
 | Backend | OTLP logs | Elasticsearch `_bulk` |

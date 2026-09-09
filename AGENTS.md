@@ -247,6 +247,43 @@ Two `container:` fields exist for settings a CLI flag cannot reach:
   in the API says so — only `docker logs` names the bound address, and every
   ingest from outside answers a bare connection reset with no HTTP status.
 
+`allow:` names case ids a maintainer has read and accepted, each with a
+one-line reason — for a backend maintainer running `action.yml` in their own
+CI, not for this repository's own adapters. It never changes a verdict: the
+runner decides `PASS`/`REJECT`/`ALTER` from the wire alone, exactly as it
+would without the entry. What it changes is only how the action's job summary
+presents the row, moving it to its own section instead of reading as an
+unreviewed failure — because the job already never fails on a verdict, only
+on a harness error. Silence is not acceptance; a case id absent from `allow:`
+is printed with the others.
+
+```yaml
+allow:
+  otlp-logs/body-invalid-utf8: "documented, tracked at our-org/our-store#123"
+```
+
+## Running the suite without cloning this repository
+
+`action.yml` at the repository root is a composite GitHub Action a backend
+maintainer adds to their own CI, so a commit that breaks conformance is
+visible without anyone cloning this repository by hand. It takes `backend`
+(a name from this repository's own `backends/`, or a `path/to/adapter.yaml`
+already checked out in the caller's own repository, for a backend not carried
+here), `suite`, `url` of the already-running backend, and `version` (a
+release tag of this project, default `latest`) — pinning `version` pins both
+the runner binary and the corpus it is paired with, so a result names an
+exact version of both rather than a mix. It fails the job only on a harness
+error; verdicts never fail it, which is what makes `allow:` above meaningful
+rather than a way to silence CI.
+
+`.github/workflows/release.yml` builds and attaches the binaries `action.yml`
+downloads, for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`, on
+every `v*` tag. `.github/workflows/dogfood.yml` runs the action against every
+adapter this repository carries, on a pull request that touches `cases/` or
+`backends/` — using the pull request's own binary and corpus (`action.yml`'s
+`ref`/`binary-path` inputs, which exist only for that workflow) rather than
+the last published release, so a wrong case goes red before it ships.
+
 ## Quarterly reruns
 
 A matrix without a date is a claim about the past that reads as a claim about
@@ -296,6 +333,9 @@ than assert.
 - Every case cites a rule with a basis (`tools/check_corpus.py`)
 - Every adapter pins its image and can be started
 - `cargo audit`
+- A pull request touching `cases/` or `backends/` runs `action.yml` against
+  every adapter, using that pull request's own binary and corpus
+  (`.github/workflows/dogfood.yml`)
 
 ## Never
 

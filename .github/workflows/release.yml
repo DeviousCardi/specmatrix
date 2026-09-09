@@ -1,0 +1,40 @@
+name: release
+
+# A maintainer running the CI action, or the corpus by hand, needs a binary
+# that is not "clone this repository and build it". This builds one for each
+# architecture the action supports and attaches it to the release the tag
+# names.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to a commit, not a tag, the same as every other
+      # workflow in this repository.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.target }}
+      # Builds (cross-compiling for aarch64 via `cross`, which this action
+      # drives itself), archives, and uploads to the release the pushed tag
+      # names, creating it if this is the first artefact for it.
+      - uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
+        with:
+          bin: specmatrix
+          target: ${{ matrix.target }}
+          archive: specmatrix-$tag-$target
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}

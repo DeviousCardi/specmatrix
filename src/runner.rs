@@ -35,6 +35,12 @@ pub struct CheckResult {
     pub verdict: Verdict,
     /// One line saying what happened. Shown beside the verdict.
     pub detail: String,
+    /// The maintainer's own reason, from the adapter's `allow:` list, for
+    /// having read this verdict and accepted it. Never affects the verdict
+    /// itself — only how a caller such as the CI action chooses to present
+    /// the result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -135,6 +141,7 @@ impl Runner {
                     title: case.title.clone(),
                     verdict: Verdict::NotApplicable,
                     detail: reason.clone(),
+                    allowed_reason: self.backend.allow.get(&case.id).cloned(),
                 },
                 None => self.run_or_report(suite, case),
             });
@@ -161,6 +168,7 @@ impl Runner {
                 title: case.title.clone(),
                 verdict: Verdict::NotApplicable,
                 detail: format!("harness error: {e:#}"),
+                allowed_reason: self.backend.allow.get(&case.id).cloned(),
             },
         }
     }
@@ -524,7 +532,14 @@ impl Runner {
     }
 
     fn result(&self, case: &Case, verdict: Verdict, detail: String) -> CheckResult {
-        CheckResult { id: case.id.clone(), title: case.title.clone(), verdict, detail }
+        let allowed_reason = self.backend.allow.get(&case.id).cloned();
+        CheckResult {
+            id: case.id.clone(),
+            title: case.title.clone(),
+            verdict,
+            detail,
+            allowed_reason,
+        }
     }
 
     /// Variables available to payloads and adapter templates.
@@ -1258,6 +1273,73 @@ expect:
         let result = runner.run_case("otlp-logs", &case).expect("no harness error");
         assert_eq!(result.verdict, Verdict::Pass, "detail: {}", result.detail);
         assert!(result.detail.contains("round trip intact"), "{}", result.detail);
+    }
+
+    /// The adapter's `allow:` list is carried onto the result untouched — it
+    /// never changes the verdict, only names the reason a maintainer already
+    /// accepted it. A CI action reads this to move the row into its own
+    /// section rather than reporting it as unreviewed.
+    #[test]
+    fn an_allowed_case_id_carries_its_reason_without_changing_the_verdict() {
+        let adapter: Backend = serde_yaml::from_str(
+            r#"
+name: stub
+allow:
+  otlp-logs/minimal-record: "known, tracked upstream at example.com/issues/1"
+protocols:
+  otlp-logs:
+    formats: [otlp-json]
+    ingest:
+      request: POST /ingest
+    readback:
+      request: POST /search
+      records: /hits
+      fields:
+        body: /message
+      poll:
+        interval_ms: 10
+        timeout_ms: 120
+"#,
+        )
+        .expect("adapter parses");
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            (
+                "/search",
+                vec![Reply::json(
+                    200,
+                    r#"{"hits":[{"message":"TRUNCATED","specmatrix.run":"{{RUNKEY}}"}]}"#,
+                )],
+            ),
+        ]);
+        let runner = Runner::new(adapter, stub.url.clone(), false).expect("runner builds");
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.verdict, Verdict::Alter, "detail: {}", result.detail);
+        assert_eq!(
+            result.allowed_reason.as_deref(),
+            Some("known, tracked upstream at example.com/issues/1")
+        );
+    }
+
+    /// A case id absent from `allow:` carries no reason — silence is not
+    /// acceptance.
+    #[test]
+    fn a_case_not_named_in_allow_carries_no_reason() {
+        let stub = stub::start(vec![
+            ("/ingest", vec![Reply::json(200, "{}")]),
+            (
+                "/search",
+                vec![Reply::json(
+                    200,
+                    r#"{"hits":[{"message":"specmatrix minimal record","severity":"INFO","specmatrix.run":"{{RUNKEY}}"}]}"#,
+                )],
+            ),
+        ]);
+        let runner = runner_for(&stub.url, vec![], Reply::json(200, "{}"));
+        let case = case_yaml("  readback:\n    match: exact\n    on: [body]");
+        let result = runner.run_case("otlp-logs", &case).expect("no harness error");
+        assert_eq!(result.allowed_reason, None);
     }
 
     /// A value that comes back changed is an ALTER naming both sides, so a
