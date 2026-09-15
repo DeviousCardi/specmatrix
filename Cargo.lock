@@ -1602,7 +1602,7 @@ dependencies = [
  "clap",
  "opentelemetry-proto",
  "prost",
- "rand 0.9.5",
+ "rand 0.10.2",
  "regex",
  "reqwest",
  "serde",
